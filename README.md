@@ -88,6 +88,19 @@ state changes are `advance_job()` / `complete_job()` / `cancel_job()`, and all
 of them are `SECURITY DEFINER`. If you find yourself wanting a raw `.update()`
 on `jobs`, add an RPC instead.
 
+**Function privileges are an allowlist, and revoking from `anon` is not
+enough.** PostgreSQL grants `EXECUTE` on every new function to `PUBLIC`, and
+`anon` inherits `PUBLIC` -- so `REVOKE ... FROM anon, authenticated` does
+nothing at all. This shipped as a real hole: `adjust_wallet()`, which is
+`SECURITY DEFINER` and writes the money ledger, was callable by anyone
+holding the publishable key. `…0908000100` revokes from `PUBLIC`, changes the
+schema default so new functions do not reintroduce it, and grants back only
+what a client actually calls. `02_privilege_test.sql` asserts the privilege
+graph so it cannot regress.
+
+If you add a function, it is owner-only until you name it in that grant list.
+That is the intended direction of failure.
+
 **The fare the client shows is not the fare that gets charged.** The booking
 screen computes an estimate locally so the number updates as the pin moves;
 `create_job()` recomputes it server-side and writes that. A tampered client
@@ -147,6 +160,7 @@ Migrations are ordered and each one is self-contained:
 | `…001300_storage` | Buckets and their access rules |
 | `…001400_landmarks` | Landmark suggestions and fuzzy search |
 | `…001500_push_tokens` | Per-device push registration |
+| `…0908000100_lock_down_function_grants` | Revokes EXECUTE from PUBLIC; grants back an allowlist |
 
 ## Before you launch
 
@@ -196,5 +210,18 @@ It asserts the things that would cost real money if they broke — first-accept-
 wins under contention, that a driver cannot bypass errand receipt approval,
 that commission lands on the service fee and not on the customer's groceries,
 and that completing a job twice does not charge commission twice.
+
+`02_privilege_test.sql` checks the privilege graph rather than behaviour: that
+no money mover or destructive sweeper is reachable by `anon` or
+`authenticated`, that nothing in `public` grants `EXECUTE` to `PUBLIC`, that
+the schema default cannot reintroduce it, that the ledger and audit tables are
+not directly writable, that RLS is on for every table we own — and that the
+lockdown did not break any RPC the apps rely on.
+
+A caveat worth knowing about both files: `psql` connects as superuser, which
+bypasses RLS entirely. Behavioural tests here therefore prove the *logic*, not
+the *policies*. Row-level rules need exercising over the API with a real user
+JWT — that is how the RLS recursion bug got found, long after this suite was
+green.
 
 `pnpm test:all` runs the typecheck, the unit tests and the SQL suite together.

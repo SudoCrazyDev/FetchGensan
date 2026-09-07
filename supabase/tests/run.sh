@@ -80,7 +80,8 @@ for migration in "$migrations"/*.sql; do
 done
 
 run_sql_file "seed.sql" "$here/../seed.sql"
-run_sql_file "assertions" "$here/01_dispatch_test.sql"
+run_sql_file "dispatch assertions" "$here/01_dispatch_test.sql"
+run_sql_file "privilege assertions" "$here/02_privilege_test.sql"
 
 echo
 echo "==> all migrations applied and assertions passed"
