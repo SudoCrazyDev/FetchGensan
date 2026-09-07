@@ -42,8 +42,18 @@ export default function SignIn() {
     }
   }
 
-  async function verify() {
-    if (code.length !== 6) {
+  /**
+   * Takes the code as an argument rather than reading `code` from state.
+   *
+   * This is not a style preference. When auto-submitting from
+   * onChangeText, a closure created during that render still sees the
+   * PREVIOUS value of `code` -- so the six-digit check failed and showed
+   * "Enter the 6-digit code" even though the field was full. Android SMS
+   * autofill made it worse: it delivers all six digits in one change
+   * event, when `code` is still empty, so autofill never worked at all.
+   */
+  async function verify(value: string) {
+    if (value.length !== 6) {
       setError('Enter the 6-digit code');
       return;
     }
@@ -51,7 +61,7 @@ export default function SignIn() {
     setBusy(true);
     setError(null);
     try {
-      await api.auth.verifyOtp(e164, code);
+      await api.auth.verifyOtp(e164, value);
       // The AuthGate in _layout.tsx picks up the session and redirects.
     } catch (e) {
       setError(humanizeError(e));
@@ -119,8 +129,10 @@ export default function SignIn() {
                     setCode(digits);
                     setError(null);
                     // Auto-submit on the sixth digit: nobody wants to reach
-                    // for a button after typing a code they just read.
-                    if (digits.length === 6) setTimeout(() => void verify(), 80);
+                    // for a button after typing a code they just read. The
+                    // digits are passed in, not read back from state, which
+                    // has not flushed yet at this point.
+                    if (digits.length === 6) void verify(digits);
                   }}
                   placeholder="123456"
                   keyboardType="number-pad"
@@ -135,7 +147,7 @@ export default function SignIn() {
                   label="Verify"
                   size="lg"
                   loading={busy}
-                  onPress={() => void verify()}
+                  onPress={() => void verify(code)}
                 />
                 <Row justify="space-between">
                   <Button

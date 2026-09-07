@@ -19,6 +19,12 @@ declare
   claimed jobs;
   commission int;
   fare_total int;
+  expected_fare int;
+  expected_commission int;
+  errand_items_cost int;
+  errand_bps int;
+  job_distance int;
+  job_created timestamptz;
   errand_job jobs;
   item_id uuid;
   failed boolean;
@@ -248,21 +254,32 @@ begin
 
   -- ------------------------------------------------------------ money
 
-  select final_total_centavos, commission_centavos
-    into fare_total, commission
+  select final_total_centavos, commission_centavos, distance_meters, created_at
+    into fare_total, commission, job_distance, job_created
     from jobs where id = j.id;
 
-  -- Gaisano to KCC is roughly 1km, which is inside the 2km the base fare
-  -- already covers, so this ride is the PHP 25 minimum. (The 3.5km = PHP 39
-  -- case is asserted directly against quote_fare above.)
-  if fare_total <> 2500 then
-    raise exception 'FAIL: expected a 2500 centavo fare for the short hop, got %', fare_total;
-  end if;
+  -- Derived, never hardcoded.
+  --
+  -- The fare depends on the wall clock: a 22:00-05:00 Manila booking picks up
+  -- the night surcharge. An earlier version of this test asserted a literal
+  -- 2500 and duly passed all afternoon, then failed every night -- the worst
+  -- kind of flake, because it looks like a real regression at 2am.
+  --
+  -- Re-pricing the job's own distance at its own creation time keeps this
+  -- deterministic AND still meaningful: it proves create_job() priced the
+  -- booking through quote_fare() rather than trusting the client.
+  select total_centavos into expected_fare
+    from quote_fare('ride', job_distance, 0, job_created);
 
-  -- 15% of PHP 25.
-  if commission <> 375 then
-    raise exception 'FAIL: expected 375 centavos commission on a PHP 25 ride, got %', commission;
+  if fare_total <> expected_fare then
+    raise exception 'FAIL: job priced at % but quote_fare says % for %m at %',
+      fare_total, expected_fare, job_distance, job_created;
   end if;
+  raise notice 'ok   create_job priced the booking server-side (% centavos for %m)',
+    fare_total, job_distance;
+
+  -- The pinned daytime and night fares are asserted directly against
+  -- quote_fare further up, with explicit timestamps.
 
   -- And state the rule, not just the number, so a fare change does not
   -- silently invalidate this check.
@@ -344,11 +361,18 @@ begin
   end if;
   raise notice 'ok   an unavailable item is excluded from the receipt total';
 
-  -- PHP 80 service + PHP 275 items.
-  if errand_job.final_total_centavos <> 35500 then
-    raise exception 'FAIL: expected a 35500 total, got %', errand_job.final_total_centavos;
+  -- Asserted as the invariant, not a literal: the errand service fee also
+  -- picks up the night surcharge between 22:00 and 05:00 Manila, so any
+  -- hardcoded total here would fail overnight.
+  if errand_job.final_total_centavos
+       <> errand_job.quoted_fare_centavos + errand_job.items_cost_centavos then
+    raise exception 'FAIL: total % is not service % + items %',
+      errand_job.final_total_centavos,
+      errand_job.quoted_fare_centavos,
+      errand_job.items_cost_centavos;
   end if;
-  raise notice 'ok   the errand total is service fee plus real receipt';
+  raise notice 'ok   the errand total is service fee (%) plus real receipt (%)',
+    errand_job.quoted_fare_centavos, errand_job.items_cost_centavos;
 
   -- The driver must not be able to skip the customer's approval.
   failed := false;
@@ -372,15 +396,31 @@ begin
   perform set_config('request.jwt.claim.sub', drv1::text, true);
   errand_job := complete_job(errand_job.id);
 
-  -- THE important one: commission is on the PHP 80 service, not the PHP 355
-  -- total. 20% of 8000 = 1600. Charging on the total would be 7100.
-  select commission_centavos into commission from jobs where id = errand_job.id;
-  if commission <> 1600 then
+  -- THE important one: commission comes off the service fee, never the
+  -- groceries. Stated as the rule rather than a magic number so it keeps
+  -- holding when fares or the night surcharge change.
+  select commission_centavos, final_total_centavos, items_cost_centavos, commission_bps
+    into commission, fare_total, errand_items_cost, errand_bps
+    from jobs where id = errand_job.id;
+
+  expected_commission := round((fare_total - errand_items_cost)::numeric * errand_bps / 10000);
+
+  if commission <> expected_commission then
     raise exception
-      'FAIL: errand commission must be 20%% of the PHP 80 service fee (1600), got % '
-      '-- it is being charged on the groceries', commission;
+      'FAIL: errand commission is % but should be % (%bps of the % service fee, '
+      'excluding % of groceries) -- it looks like it is being charged on the goods',
+      commission, expected_commission, errand_bps,
+      fare_total - errand_items_cost, errand_items_cost;
   end if;
-  raise notice 'ok   errand commission is charged on the service, NOT the goods';
+
+  -- And prove the difference actually matters on this booking: charging on
+  -- the full total would take several times as much from the driver.
+  if commission >= round(fare_total::numeric * errand_bps / 10000) then
+    raise exception 'FAIL: commission % is as large as a cut of the whole total', commission;
+  end if;
+
+  raise notice 'ok   errand commission is charged on the service (%), NOT the goods (%)',
+    commission, round(fare_total::numeric * errand_bps / 10000);
 
   -- ------------------------------------------------------------ constraints
 

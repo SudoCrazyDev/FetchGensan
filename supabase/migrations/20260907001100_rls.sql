@@ -20,6 +20,84 @@ alter table driver_locations   enable row level security;
 alter table wallet_transactions enable row level security;
 alter table ratings            enable row level security;
 
+-- ---------------------------------------------------------------- predicates
+--
+-- Every function here exists to break an RLS recursion cycle.
+--
+-- The cycle that forced this: a policy on `jobs` that reads `job_offers`,
+-- plus a policy on `job_offers` that reads `jobs`. Postgres detects the
+-- mutual reference and refuses BOTH tables with
+--   infinite recursion detected in policy for relation "jobs"
+-- and because the `profiles` policy also reads `jobs`, that single cycle
+-- takes out the most basic query in the whole app -- a user reading their
+-- own profile row.
+--
+-- SECURITY DEFINER runs as the function owner, so RLS is not re-applied to
+-- the tables read inside, and the cycle is cut. Each one is STABLE and takes
+-- an explicit id rather than returning a set, so none of them can be used to
+-- enumerate rows the caller could not already name.
+--
+-- RULE FOR THIS FILE: a policy body must never SELECT from another
+-- RLS-protected table. Add a predicate here instead.
+
+create or replace function job_is_mine(p_job_id uuid)
+returns boolean language sql stable security definer set search_path = public as $fn$
+  select exists (select 1 from jobs where id = p_job_id and customer_id = auth.uid());
+$fn$;
+
+create or replace function job_is_my_assignment(p_job_id uuid)
+returns boolean language sql stable security definer set search_path = public as $fn$
+  select exists (select 1 from jobs where id = p_job_id and driver_id = auth.uid());
+$fn$;
+
+-- Customer, assigned driver, or staff.
+create or replace function job_participant(p_job_id uuid)
+returns boolean language sql stable security definer set search_path = public as $fn$
+  select is_staff() or exists (
+    select 1 from jobs
+    where id = p_job_id
+      and (customer_id = auth.uid() or driver_id = auth.uid())
+  );
+$fn$;
+
+-- A customer may edit their shopping list only until someone starts
+-- shopping for it.
+create or replace function job_items_editable(p_job_id uuid)
+returns boolean language sql stable security definer set search_path = public as $fn$
+  select exists (
+    select 1 from jobs
+    where id = p_job_id
+      and customer_id = auth.uid()
+      and status in ('draft', 'searching', 'assigned', 'arriving', 'arrived_pickup')
+  );
+$fn$;
+
+-- Does the caller hold an offer on this job that has not expired?
+create or replace function has_live_offer(p_job_id uuid)
+returns boolean language sql stable security definer set search_path = public as $fn$
+  select exists (
+    select 1 from job_offers
+    where job_id = p_job_id
+      and driver_id = auth.uid()
+      and response = 'pending'
+      and expires_at > now()
+  );
+$fn$;
+
+-- Is this profile the customer on a job the calling driver is currently on?
+-- Scoped to live jobs, so the access disappears when the job ends.
+create or replace function is_active_job_counterparty(p_profile_id uuid)
+returns boolean language sql stable security definer set search_path = public as $fn$
+  select exists (
+    select 1 from jobs
+    where driver_id = auth.uid()
+      and customer_id = p_profile_id
+      and status in ('assigned', 'arriving', 'arrived_pickup', 'shopping',
+                     'awaiting_approval', 'in_progress')
+  );
+$fn$;
+
+
 -- ---------------------------------------------------------------- profiles
 
 create policy profiles_select_self on profiles
@@ -31,15 +109,7 @@ create policy profiles_select_staff on profiles
 -- A driver on an active job needs the customer name and phone to find them.
 -- Scoped to the live job only -- once it completes, the access goes away.
 create policy profiles_select_active_counterparty on profiles
-  for select using (
-    exists (
-      select 1 from jobs j
-      where j.driver_id = auth.uid()
-        and j.customer_id = profiles.id
-        and j.status in ('assigned', 'arriving', 'arrived_pickup', 'shopping',
-                         'awaiting_approval', 'in_progress')
-    )
-  );
+  for select using (is_active_job_counterparty(profiles.id));
 
 -- Row access only. WHICH columns may be written is enforced by the
 -- column-level GRANT at the bottom of this file (name and avatar only), not
@@ -132,15 +202,7 @@ create policy jobs_select_driver on jobs
 -- A driver holding a live offer must be able to read the job to decide.
 -- Expired offers stop granting access, so a declined job disappears.
 create policy jobs_select_offered on jobs
-  for select using (
-    exists (
-      select 1 from job_offers o
-      where o.job_id = jobs.id
-        and o.driver_id = auth.uid()
-        and o.response = 'pending'
-        and o.expires_at > now()
-    )
-  );
+  for select using (has_live_offer(jobs.id));
 
 create policy jobs_select_staff on jobs
   for select using (is_staff());
@@ -154,44 +216,19 @@ create policy jobs_all_staff on jobs
 -- ---------------------------------------------------------------- errands
 
 create policy errand_items_read on errand_items
-  for select using (
-    exists (
-      select 1 from jobs j
-      where j.id = errand_items.job_id
-        and (j.customer_id = auth.uid() or j.driver_id = auth.uid() or is_staff())
-    )
-  );
+  for select using (job_participant(errand_items.job_id));
 
 -- The customer may edit their shopping list, but only while nobody has
 -- started shopping for it.
 create policy errand_items_edit_customer on errand_items
-  for all using (
-    exists (
-      select 1 from jobs j
-      where j.id = errand_items.job_id
-        and j.customer_id = auth.uid()
-        and j.status in ('draft', 'searching', 'assigned', 'arriving', 'arrived_pickup')
-    )
-  ) with check (
-    exists (
-      select 1 from jobs j
-      where j.id = errand_items.job_id
-        and j.customer_id = auth.uid()
-        and j.status in ('draft', 'searching', 'assigned', 'arriving', 'arrived_pickup')
-    )
-  );
+  for all using (job_items_editable(errand_items.job_id))
+  with check (job_items_editable(errand_items.job_id));
 
 create policy errand_items_staff on errand_items
   for all using (is_staff()) with check (is_staff());
 
 create policy errand_receipts_read on errand_receipts
-  for select using (
-    exists (
-      select 1 from jobs j
-      where j.id = errand_receipts.job_id
-        and (j.customer_id = auth.uid() or j.driver_id = auth.uid() or is_staff())
-    )
-  );
+  for select using (job_participant(errand_receipts.job_id));
 
 create policy errand_receipts_staff on errand_receipts
   for all using (is_staff()) with check (is_staff());
@@ -204,9 +241,7 @@ create policy job_offers_own on job_offers
 -- The customer sees the count of pending offers ("looking for a driver...")
 -- but not which drivers were asked.
 create policy job_offers_customer on job_offers
-  for select using (
-    exists (select 1 from jobs j where j.id = job_offers.job_id and j.customer_id = auth.uid())
-  );
+  for select using (job_is_mine(job_offers.job_id));
 
 create policy job_offers_staff on job_offers
   for all using (is_staff()) with check (is_staff());
@@ -219,11 +254,7 @@ create policy driver_locations_own on driver_locations
 -- The trail for a job is readable by that job customer, for the live map
 -- and for a dispute after the fact.
 create policy driver_locations_job_customer on driver_locations
-  for select using (
-    job_id is not null
-    and exists (select 1 from jobs j where j.id = driver_locations.job_id
-                                       and j.customer_id = auth.uid())
-  );
+  for select using (job_id is not null and job_is_mine(driver_locations.job_id));
 
 create policy driver_locations_staff on driver_locations
   for all using (is_staff()) with check (is_staff());
@@ -242,13 +273,7 @@ create policy wallet_transactions_staff on wallet_transactions
 -- ---------------------------------------------------------------- audit
 
 create policy job_events_participants on job_events
-  for select using (
-    exists (
-      select 1 from jobs j
-      where j.id = job_events.job_id
-        and (j.customer_id = auth.uid() or j.driver_id = auth.uid() or is_staff())
-    )
-  );
+  for select using (job_participant(job_events.job_id));
 
 -- ---------------------------------------------------------------- ratings
 
@@ -297,6 +322,17 @@ grant insert on drivers to authenticated;
 -- the console, because it is a column DEFAULT rather than a call inside a
 -- security-definer function.
 grant execute on function generate_job_reference() to authenticated;
+
+-- The policy predicates above. EXECUTE is required because a policy is
+-- evaluated as the calling role, even though the functions run as owner.
+grant execute on function
+  job_is_mine(uuid),
+  job_is_my_assignment(uuid),
+  job_participant(uuid),
+  job_items_editable(uuid),
+  has_live_offer(uuid),
+  is_active_job_counterparty(uuid)
+to authenticated;
 
 grant select on public_driver_info, dispatch_board, driver_roster to authenticated;
 

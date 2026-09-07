@@ -19,6 +19,20 @@ on conflict (id) do nothing;
 -- off that segment, so a driver physically cannot write into another
 -- driver folder.
 
+-- Only the assigned driver, and only while the errand is actually running.
+-- Security definer for the same recursion reason as the RLS predicates.
+create or replace function job_receipt_uploadable(p_job_id uuid)
+returns boolean language sql stable security definer set search_path = public as $fn$
+  select exists (
+    select 1 from jobs
+    where id = p_job_id
+      and driver_id = auth.uid()
+      and status in ('arrived_pickup', 'shopping', 'awaiting_approval')
+  );
+$fn$;
+
+grant execute on function job_receipt_uploadable(uuid) to authenticated;
+
 -- ---------------------------------------------------------------- driver-docs
 
 create policy "driver docs are readable by their owner"
@@ -52,14 +66,9 @@ create policy "receipts readable by the job participants"
   on storage.objects for select
   using (
     bucket_id = 'receipts'
-    and (
-      is_staff()
-      or exists (
-        select 1 from jobs j
-        where j.id::text = (storage.foldername(name))[1]
-          and (j.customer_id = auth.uid() or j.driver_id = auth.uid())
-      )
-    )
+    -- job_participant() is security-definer; see the predicates section of
+    -- the RLS migration for why a direct subquery on `jobs` is not safe here.
+    and job_participant(((storage.foldername(name))[1])::uuid)
   );
 
 -- Only the assigned driver, and only while the errand is actually running.
@@ -67,12 +76,7 @@ create policy "assigned driver uploads receipts"
   on storage.objects for insert
   with check (
     bucket_id = 'receipts'
-    and exists (
-      select 1 from jobs j
-      where j.id::text = (storage.foldername(name))[1]
-        and j.driver_id = auth.uid()
-        and j.status in ('arrived_pickup', 'shopping', 'awaiting_approval')
-    )
+    and job_receipt_uploadable(((storage.foldername(name))[1])::uuid)
   );
 
 -- ---------------------------------------------------------------- avatars

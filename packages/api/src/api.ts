@@ -43,6 +43,30 @@ export const LIVE_STATUSES: JobStatus[] = [
   'in_progress',
 ];
 
+/**
+ * Returns a brand-new realtime channel, discarding any existing one with the
+ * same name.
+ *
+ * supabase-js caches channels by name: `client.channel(name)` hands back the
+ * EXISTING channel if one is registered, and calling `.on()` on a channel
+ * that has already subscribed throws
+ *
+ *   cannot add `postgres_changes` callbacks ... after `subscribe()`
+ *
+ * which is exactly what happens when a React effect re-runs before its
+ * cleanup has torn the old channel down -- a dev double-mount, or simply
+ * `userId` transitioning from null to a real id on sign-in. Removing first
+ * makes every subscribe idempotent.
+ */
+function freshChannel(client: FetchClient, name: string) {
+  for (const existing of client.getChannels()) {
+    if (existing.topic === name || existing.topic === `realtime:${name}`) {
+      void client.removeChannel(existing);
+    }
+  }
+  return client.channel(name);
+}
+
 function unwrap<T>(result: { data: T | null; error: unknown }): T {
   if (result.error) throw result.error;
   if (result.data === null) {
@@ -362,8 +386,7 @@ export function createApi(client: FetchClient) {
      * this only ever delivers rows the caller could have selected.
      */
     onJobChange(jobId: string, cb: (job: Job) => void) {
-      const channel = client
-        .channel(`job:${jobId}`)
+      const channel = freshChannel(client, `job:${jobId}`)
         .on(
           'postgres_changes',
           { event: 'UPDATE', schema: 'public', table: 'jobs', filter: `id=eq.${jobId}` },
@@ -378,8 +401,7 @@ export function createApi(client: FetchClient) {
 
     /** Fires when any of this customer's jobs change, e.g. a driver accepts. */
     onMyJobsChange(customerId: string, cb: (job: Job) => void) {
-      const channel = client
-        .channel(`jobs:customer:${customerId}`)
+      const channel = freshChannel(client, `jobs:customer:${customerId}`)
         .on(
           'postgres_changes',
           {
@@ -594,8 +616,7 @@ export function createApi(client: FetchClient) {
      * path, because a websocket does not survive the phone sleeping.
      */
     onOffer(driverId: string, cb: (offer: JobOffer) => void) {
-      const channel = client
-        .channel(`offers:${driverId}`)
+      const channel = freshChannel(client, `offers:${driverId}`)
         .on(
           'postgres_changes',
           {
@@ -716,8 +737,7 @@ export function createApi(client: FetchClient) {
 
     /** Any job change at all -- what keeps the live board live. */
     onAnyJobChange(cb: () => void) {
-      const channel = client
-        .channel('dispatch:jobs')
+      const channel = freshChannel(client, 'dispatch:jobs')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, () => cb())
         .subscribe();
 

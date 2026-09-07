@@ -24,7 +24,7 @@ enabled = true
 enabled = true
 port = 54323
 
-[inbucket]
+[local_smtp]
 enabled = true
 port = 54324
 
@@ -61,14 +61,22 @@ template = "FetchGensan code: {{ .Code }}. Do not share this with anyone."
 "639170000003" = "123456"
 "639170000004" = "123456"
 
-# Production uses a real provider. Semaphore and Movider are the usual
-# choices in the Philippines -- both are cheaper per SMS than Twilio for PH
-# numbers and both support sender-name registration.
-# [auth.sms.twilio]
-# enabled = true
-# account_sid = "env(TWILIO_ACCOUNT_SID)"
-# message_service_sid = "env(TWILIO_MESSAGE_SERVICE_SID)"
-# auth_token = "env(TWILIO_AUTH_TOKEN)"
+# LOCAL ONLY -- these credentials are deliberately fake.
+#
+# The CLI logs "no SMS provider is enabled. Disabling phone login" and turns
+# phone auth off completely unless a provider is flagged enabled, and
+# [auth.sms.test_otp] on its own does not satisfy that check. Since every
+# number in test_otp short-circuits before any network call is made, these
+# values are never sent anywhere.
+#
+# In production, swap this for a real provider. Semaphore and Movider are
+# the usual choices in the Philippines -- both are cheaper per SMS for PH
+# numbers than Twilio and both support sender-name registration.
+[auth.sms.twilio]
+enabled = true
+account_sid = "local-dev-unused"
+message_service_sid = "local-dev-unused"
+auth_token = "env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"
 
 [edge_runtime]
 enabled = true
@@ -77,9 +85,6 @@ inspector_port = 8083
 
 [functions.dispatch-tick]
 verify_jwt = false
-
-[functions.route-quote]
-verify_jwt = true
 
 [functions.push-notify]
 verify_jwt = false
