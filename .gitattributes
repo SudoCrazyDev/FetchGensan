@@ -1,0 +1,31 @@
+# Normalise line endings in the repository to LF, and let Git decide what to
+# check out per platform.
+* text=auto
+
+# These MUST stay LF on every platform.
+#
+# A shell script checked out with CRLF fails immediately and cryptically:
+# the shebang becomes "#!/usr/bin/env bash\r" and you get
+# "bash\r: No such file or directory". Same for anything a Linux container
+# executes -- the Docker-based SQL suite and the Deno edge functions.
+*.sh        text eol=lf
+*.sql       text eol=lf
+Dockerfile  text eol=lf
+
+# Binary: never touch these.
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.webp      binary
+*.ttf       binary
+*.otf       binary
+*.woff      binary
+*.woff2     binary
+*.aab       binary
+*.apk       binary
+*.ipa       binary
+
+# Generated -- keeps diffs and reviews readable.
+pnpm-lock.yaml linguist-generated=true -diff
