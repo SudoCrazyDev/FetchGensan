@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+/*
+ * Dispatch console theme.
+ *
+ * Dark by default and not switchable. This runs on one screen in the
+ * dispatch office for a whole shift, often at night, and a dispatcher
+ * scanning a board of waiting jobs for eight hours should not be staring
+ * into a white page. Status colours are tuned for glanceability on that
+ * dark ground rather than for matching the mobile apps exactly.
+ */
+
+:root {
+  --bg: #020617;
+  --surface: #0f172a;
+  --surface-raised: #1e293b;
+  --border: #334155;
+  --text: #f8fafc;
+  --text-muted: #94a3b8;
+
+  --amber: #fba338;
+  --amber-strong: #f98a15;
+
+  --green: #22c55e;
+  --red: #ef4444;
+  --blue: #3b82f6;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-raised: var(--surface-raised);
+  --color-line: var(--border);
+  --color-ink: var(--text);
+  --color-muted: var(--text-muted);
+  --color-brand: var(--amber);
+  --color-brand-strong: var(--amber-strong);
+  --color-ok: var(--green);
+  --color-bad: var(--red);
+  --color-info: var(--blue);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+/*
+ * A job that has been waiting too long pulses. On a board of twenty rows,
+ * colour alone stops registering after an hour of looking at it; motion
+ * does not. Disabled for anyone who has asked for reduced motion.
+ */
+@keyframes urgent-pulse {
+  0%,
+  100% {
+    border-color: var(--red);
+  }
+  50% {
+    border-color: color-mix(in srgb, var(--red) 35%, transparent);
+  }
+}
+
+.urgent {
+  animation: urgent-pulse 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .urgent {
+    animation: none;
+    border-color: var(--red);
+  }
+}

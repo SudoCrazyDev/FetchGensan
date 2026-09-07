@@ -1,0 +1,27 @@
+node_modules/
+.turbo/
+dist/
+.next/
+.expo/
+*.tsbuildinfo
+
+# env
+.env
+.env.local
+.env*.local
+!.env.example
+
+# native builds
+android/
+ios/
+*.apk
+*.aab
+*.ipa
+
+# supabase local
+supabase/.branches/
+supabase/.temp/
+
+# os / editor
+.DS_Store
+Thumbs.db

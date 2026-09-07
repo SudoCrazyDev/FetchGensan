@@ -1,0 +1,41 @@
+{
+  "name": "fetchgensan",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "rider": "pnpm --filter @fetch/rider start",
+    "driver": "pnpm --filter @fetch/driver start",
+    "admin": "pnpm --filter @fetch/admin dev",
+    "db:types": "supabase gen types typescript --local > packages/api/src/database.types.ts",
+    "db:reset": "supabase db reset",
+    "db:push": "supabase db push",
+    "seed:users": "pnpm --filter @fetch/api seed:users",
+    "test:db": "bash supabase/tests/run.sh",
+    "test:all": "pnpm typecheck && pnpm test && pnpm test:db"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.5",
+    "typescript": "~6.0.3",
+    "prettier": "^3.6.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "unrs-resolver",
+      "sharp"
+    ],
+    "overrides": {
+      "react": "19.2.3",
+      "react-dom": "19.2.3"
+    }
+  }
+}

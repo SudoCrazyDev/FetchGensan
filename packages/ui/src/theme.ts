@@ -1,0 +1,177 @@
+/**
+ * FetchGensan design tokens, shared by the rider and driver apps.
+ *
+ * Two constraints drove these choices, and both come from the actual
+ * conditions the apps get used in:
+ *
+ * 1. Sunlight. Gensan is at 6 degrees north; midday glare on a cheap phone
+ *    screen is brutal. Body text sits at 4.5:1 or better against its
+ *    background, and the primary action is a solid fill rather than an
+ *    outline.
+ * 2. Night. The service advertises 24/7 and a real share of bookings are
+ *    late-night. The dark palette is the considered one, not an
+ *    afterthought, and the driver app defaults to it because a white screen
+ *    at 2am on a motorcycle is genuinely dangerous.
+ */
+
+export const palette = {
+  // Amber, for the 24/7 promise. Deliberately not Grab green or Angkas
+  // blue -- a customer glancing at their home screen should know which app
+  // they are opening.
+  amber50: '#FFF8ED',
+  amber100: '#FFEFD4',
+  amber200: '#FEDCA8',
+  amber300: '#FDC271',
+  amber400: '#FBA338',
+  amber500: '#F98A15',
+  amber600: '#EA700B',
+  amber700: '#C2550C',
+  amber800: '#9A4310',
+  amber900: '#7C3911',
+
+  slate50: '#F8FAFC',
+  slate100: '#F1F5F9',
+  slate200: '#E2E8F0',
+  slate300: '#CBD5E1',
+  slate400: '#94A3B8',
+  slate500: '#64748B',
+  slate600: '#475569',
+  slate700: '#334155',
+  slate800: '#1E293B',
+  slate900: '#0F172A',
+  slate950: '#020617',
+
+  green500: '#22C55E',
+  green600: '#16A34A',
+  green100: '#DCFCE7',
+
+  red500: '#EF4444',
+  red600: '#DC2626',
+  red100: '#FEE2E2',
+
+  blue500: '#3B82F6',
+  blue100: '#DBEAFE',
+
+  white: '#FFFFFF',
+  black: '#000000',
+} as const;
+
+export interface Theme {
+  dark: boolean;
+  color: {
+    background: string;
+    surface: string;
+    surfaceRaised: string;
+    border: string;
+    text: string;
+    textMuted: string;
+    textInverse: string;
+    primary: string;
+    primaryPressed: string;
+    onPrimary: string;
+    success: string;
+    successSoft: string;
+    danger: string;
+    dangerSoft: string;
+    info: string;
+    infoSoft: string;
+    /** Behind a modal or an offer card. */
+    scrim: string;
+  };
+  radius: { sm: number; md: number; lg: number; xl: number; pill: number };
+  space: (n: number) => number;
+  font: {
+    /** Body copy. */
+    body: number;
+    small: number;
+    caption: number;
+    /** A fare, a total -- the number the user came to see. */
+    display: number;
+    title: number;
+    heading: number;
+  };
+}
+
+const radius = { sm: 6, md: 10, lg: 14, xl: 22, pill: 999 };
+const space = (n: number) => n * 4;
+const font = { caption: 11, small: 13, body: 15, title: 18, heading: 22, display: 34 };
+
+export const lightTheme: Theme = {
+  dark: false,
+  color: {
+    background: palette.slate50,
+    surface: palette.white,
+    surfaceRaised: palette.white,
+    border: palette.slate200,
+    text: palette.slate900,
+    textMuted: palette.slate500,
+    textInverse: palette.white,
+    primary: palette.amber600,
+    primaryPressed: palette.amber700,
+    onPrimary: palette.white,
+    success: palette.green600,
+    successSoft: palette.green100,
+    danger: palette.red600,
+    dangerSoft: palette.red100,
+    info: palette.blue500,
+    infoSoft: palette.blue100,
+    scrim: 'rgba(15, 23, 42, 0.45)',
+  },
+  radius,
+  space,
+  font,
+};
+
+export const darkTheme: Theme = {
+  dark: true,
+  color: {
+    background: palette.slate950,
+    surface: palette.slate900,
+    surfaceRaised: palette.slate800,
+    border: palette.slate700,
+    text: palette.slate50,
+    textMuted: palette.slate400,
+    textInverse: palette.slate900,
+    // Lighter amber on dark: amber600 on near-black fails contrast for
+    // text, and the primary button carries text.
+    primary: palette.amber400,
+    primaryPressed: palette.amber500,
+    onPrimary: palette.slate950,
+    success: palette.green500,
+    successSoft: 'rgba(34, 197, 94, 0.16)',
+    danger: palette.red500,
+    dangerSoft: 'rgba(239, 68, 68, 0.16)',
+    info: palette.blue500,
+    infoSoft: 'rgba(59, 130, 246, 0.16)',
+    scrim: 'rgba(0, 0, 0, 0.65)',
+  },
+  radius,
+  space,
+  font,
+};
+
+/**
+ * Minimum touch target. Android's guidance is 48dp and Apple's is 44pt;
+ * take the larger, because the person tapping is often wearing a helmet
+ * glove or holding a bag of groceries.
+ */
+export const MIN_TOUCH = 48;
+
+/** Status colours for a job badge. */
+export function statusTone(
+  status: string,
+): 'neutral' | 'progress' | 'success' | 'danger' | 'attention' {
+  switch (status) {
+    case 'completed':
+      return 'success';
+    case 'cancelled':
+    case 'expired':
+      return 'danger';
+    case 'awaiting_approval':
+      return 'attention';
+    case 'draft':
+      return 'neutral';
+    default:
+      return 'progress';
+  }
+}
