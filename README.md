@@ -187,9 +187,21 @@ bite if skipped.
   notifications all exist for this, and all three need verifying on real
   hardware before drivers rely on them. Add "disable battery optimisation for
   this app" to driver onboarding.
-- **Pick an SMS provider.** Semaphore and Movider are both cheaper per SMS for
-  PH numbers than Twilio and support sender-name registration. OTP cost is a
-  real per-signup line item.
+- **Pick an SMS provider, and budget for the integration rather than a
+  settings change.** Supabase's built-in phone providers are Twilio, Twilio
+  Verify, MessageBird, TextLocal and Vonage. Semaphore and Movider -- the
+  cheaper options for PH numbers, and the ones that support sender-name
+  registration -- are not in that list. Reaching either means implementing the
+  Send SMS auth hook: an HTTPS hook in the dashboard pointing at an edge
+  function that calls the provider's API. It is a morning's work, not a
+  dropdown, and it needs to be on the plan before launch. OTP cost is a real
+  per-signup line item either way.
+
+  Nothing blocks development while you decide. Enable the Phone provider with
+  placeholder SMS credentials and add test numbers under Authentication, then
+  sign in with their fixed codes -- a test OTP short-circuits before any
+  provider call is made. That is the same mechanism `[auth.sms.test_otp]` uses
+  in `config.toml` for the local stack.
 - **Set `DISPATCH_TICK_SECRET`** if you use the `dispatch-tick` edge function
   instead of pg_cron. It fails closed without one, so dispatch retries would
   quietly stop.
