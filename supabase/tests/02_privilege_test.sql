@@ -53,22 +53,42 @@ begin
   --
   -- The specific mistake: relying on a revoke from the named roles while the
   -- default PUBLIC grant stayed in place.
+  --
+  -- Extension-owned functions are excluded, and the reason matters. PostGIS
+  -- and pg_trgm install ~775 functions into `public`, all granting EXECUTE
+  -- to PUBLIC. On hosted Supabase they are owned by `supabase_admin`, and
+  -- `postgres` is not a superuser there, so our revoke cannot touch them --
+  -- it skips them silently. Locally psql IS superuser, so the same revoke
+  -- strips them, and the unfiltered assertion passes here while being
+  -- impossible to satisfy in production.
+  --
+  -- That divergence is the trap: an assertion that can only pass locally
+  -- reports a lockdown we do not actually have. It is also not worth
+  -- chasing -- st_distance() and friends are pure maths, not SECURITY
+  -- DEFINER, and touch none of our tables. Supabase ships every project
+  -- this way. What must hold is that nothing WE own is reachable.
   select count(*) into n
     from pg_proc p
     join pg_namespace ns on ns.oid = p.pronamespace
    where ns.nspname = 'public'
-     and has_function_privilege('public', p.oid, 'execute');
+     and has_function_privilege('public', p.oid, 'execute')
+     and not exists (
+       select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e'
+     );
 
   if n > 0 then
     select string_agg(p.proname, ', ') into bad
       from pg_proc p
       join pg_namespace ns on ns.oid = p.pronamespace
      where ns.nspname = 'public'
-       and has_function_privilege('public', p.oid, 'execute');
+       and has_function_privilege('public', p.oid, 'execute')
+       and not exists (
+         select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e'
+       );
     raise exception
-      'FAIL: % function(s) still carry an EXECUTE grant to PUBLIC: %', n, bad;
+      'FAIL: % function(s) we own still carry an EXECUTE grant to PUBLIC: %', n, bad;
   end if;
-  raise notice 'ok   no function in public grants EXECUTE to PUBLIC';
+  raise notice 'ok   no function we own grants EXECUTE to PUBLIC';
 
   -- ------------------------------------------------------------ default privileges
   --
@@ -173,6 +193,43 @@ begin
     raise exception 'FAIL: table % has row level security disabled', bad;
   end loop;
   raise notice 'ok   row level security is enabled on every table we own';
+
+end
+$$;
+
+-- ---------------------------------------------------------------- actually call it
+--
+-- The grant check above is necessary but NOT sufficient, and this is the
+-- exact gap that shipped a regression: search_landmarks() carried its anon
+-- grant correctly, and the call still failed with
+--
+--   permission denied for function is_staff
+--
+-- because search_landmarks() is `stable` rather than security definer, so
+-- landmark_suggestions' read policy -- `using (is_active or is_staff())` --
+-- was evaluated as anon, and anon had lost EXECUTE on is_staff().
+--
+-- A privilege graph cannot show that. The only way to catch it is to switch
+-- into the role and make the call.
+--
+-- `set local role` is also the one way this suite gets real RLS coverage:
+-- psql connects as superuser and bypasses row level security, but once the
+-- current role is anon, policies apply normally.
+do $$
+declare
+  n int;
+begin
+  set local role anon;
+  begin
+    select count(*) into n from search_landmarks('', null, null, 5);
+  exception when others then
+    reset role;
+    raise exception
+      'FAIL: anon holds the grant on search_landmarks but cannot CALL it: % (%)',
+      sqlerrm, sqlstate;
+  end;
+  reset role;
+  raise notice 'ok   anon can actually execute search_landmarks (% rows)', n;
 
   raise notice '';
   raise notice 'ALL PRIVILEGE ASSERTIONS PASSED';

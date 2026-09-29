@@ -1,0 +1,30 @@
+-- FetchGensan :: let anonymous landmark search work again
+--
+-- Regression from 20260908000100. That migration correctly revoked EXECUTE
+-- from PUBLIC and granted search_landmarks() back to anon -- but the grant
+-- on the function alone is not enough to make the call succeed.
+--
+-- search_landmarks() is `stable`, NOT security definer, so it runs as the
+-- caller. It selects from landmark_suggestions, whose read policy is:
+--
+--   using (is_active or is_staff())
+--
+-- RLS predicates are evaluated as the calling role, so an anonymous request
+-- invokes is_staff() as `anon` -- which no longer has EXECUTE. The result is
+-- `permission denied for function is_staff` on a screen that is meant to
+-- work before sign-in. The booking screen's landmark list went blank.
+--
+-- Granting is_staff() to anon leaks nothing. It is SECURITY DEFINER over
+--
+--   select role from profiles where id = auth.uid()
+--
+-- and for an anonymous caller auth.uid() is null, so it matches no row and
+-- coalesce()s to false. It is a constant `false` for anyone not signed in;
+-- it cannot be used to probe for or about any other user.
+--
+-- The alternative -- making search_landmarks() security definer -- would
+-- bypass the table's RLS altogether rather than evaluating it, which is a
+-- larger change in the wrong direction for a read that RLS already governs
+-- correctly.
+
+grant execute on function is_staff() to anon;
