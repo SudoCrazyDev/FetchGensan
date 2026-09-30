@@ -1,8 +1,8 @@
 /**
  * Philippine mobile number handling.
  *
- * Sign-in is phone OTP, so this is the very first thing a new customer
- * touches. People type their number every way imaginable -- 0917 123 4567,
+ * Sign-in starts with a phone number, so this is the very first thing a
+ * customer touches. People type their number every way imaginable -- 0917 123 4567,
  * 9171234567, +63 917 123 4567, 63917-123-4567 -- and Supabase Auth needs
  * E.164 (+639171234567). Normalising loosely and displaying prettily is the
  * difference between signing up and giving up.

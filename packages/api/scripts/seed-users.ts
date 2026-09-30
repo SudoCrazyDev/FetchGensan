@@ -6,7 +6,7 @@
  * Auth users need the Admin API, so this runs against the SERVICE ROLE key
  * and refuses to run against anything that is not a local Supabase stack.
  * That guard is not paranoia: a service-role key plus a script that
- * promotes an account to `admin` is exactly the combination you do not want
+ * makes an account an admin is exactly the combination you do not want
  * pointed at production by a stray .env.
  */
 
@@ -35,8 +35,12 @@ const admin = createClient(url, serviceKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
+/** Every seeded account signs in with this. Local stack only. */
+const DEV_PASSWORD = 'fetchgensan-dev';
+
 interface SeedUser {
   phone: string;
+  email?: string;
   fullName: string;
   role: 'customer' | 'driver' | 'dispatcher' | 'admin';
   driver?: {
@@ -80,8 +84,21 @@ const USERS: SeedUser[] = [
       license: 'D01-98-765432',
     },
   },
-  { phone: '+639170000004', fullName: 'Ops Desk', role: 'dispatcher' },
+  {
+    phone: '+639170000004',
+    email: 'ops@fetchgensan.test',
+    fullName: 'Ops Desk',
+    role: 'dispatcher',
+  },
+  {
+    phone: '+639170000005',
+    email: 'admin@fetchgensan.test',
+    fullName: 'Site Admin',
+    role: 'admin',
+  },
 ];
+
+const STAFF_ROLES = new Set(['dispatcher', 'admin']);
 
 async function findByPhone(phone: string): Promise<string | null> {
   // listUsers has no phone filter, so page through. Fine for four users.
@@ -99,12 +116,21 @@ async function findByPhone(phone: string): Promise<string | null> {
 async function seed(user: SeedUser): Promise<void> {
   let userId = await findByPhone(user.phone);
 
+  const login = {
+    password: DEV_PASSWORD,
+    ...(user.email ? { email: user.email, email_confirm: true } : {}),
+  };
+
   if (userId) {
-    console.log(`  = ${user.phone} already exists`);
+    // Re-running brings older OTP-only seed accounts up to date.
+    const { error } = await admin.auth.admin.updateUserById(userId, login);
+    if (error) throw error;
+    console.log(`  = ${user.phone} already exists; password reset`);
   } else {
     const { data, error } = await admin.auth.admin.createUser({
       phone: user.phone,
       phone_confirm: true,
+      ...login,
       user_metadata: { full_name: user.fullName },
     });
     if (error) throw error;
@@ -112,14 +138,33 @@ async function seed(user: SeedUser): Promise<void> {
     console.log(`  + created ${user.phone}`);
   }
 
-  // handle_new_user() created the profile row; set the role and name.
-  const { error: profileError } = await admin
-    .from('profiles')
-    .upsert(
-      { id: userId, phone: user.phone, full_name: user.fullName, role: user.role },
-      { onConflict: 'id' },
-    );
+  // handle_new_user() created the profile row; set the name. Staff access
+  // comes from user_roles below, and profiles.role follows it by trigger.
+  const { error: profileError } = await admin.from('profiles').upsert(
+    {
+      id: userId,
+      phone: user.phone,
+      full_name: user.fullName,
+      ...(STAFF_ROLES.has(user.role) ? {} : { role: user.role }),
+    },
+    { onConflict: 'id' },
+  );
   if (profileError) throw profileError;
+
+  if (STAFF_ROLES.has(user.role)) {
+    const { data: role, error: roleError } = await admin
+      .from('roles')
+      .select('id')
+      .eq('key', user.role)
+      .single();
+    if (roleError) throw roleError;
+
+    const { error: grantError } = await admin
+      .from('user_roles')
+      .upsert({ user_id: userId, role_id: role.id }, { onConflict: 'user_id,role_id' });
+    if (grantError) throw grantError;
+    console.log(`    role: ${user.role}`);
+  }
 
   if (user.driver) {
     const d = user.driver;
@@ -147,7 +192,8 @@ async function main(): Promise<void> {
     console.log(`${user.fullName} (${user.role})`);
     await seed(user);
   }
-  console.log('\nDone. Sign in with any of those numbers; the OTP is 123456.');
+  console.log(`\nDone. Sign in with any of those numbers and the password ${DEV_PASSWORD}.`);
+  console.log('Staff can also use their email. Password-reset codes are 123456.');
 }
 
 main().catch((error: unknown) => {

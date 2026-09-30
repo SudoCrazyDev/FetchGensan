@@ -36,7 +36,11 @@ begin
          'release_scheduled_jobs',
          'reap_stale_drivers',
          'prune_driver_locations',
-         'prune_push_tokens'
+         'prune_push_tokens',
+         'auth_rate_limit_hit',
+         'auth_rate_limit_clear',
+         'prune_auth_attempts',
+         'refresh_account_type'
        )
        and (
          has_function_privilege('anon', p.oid, 'execute')
@@ -93,18 +97,23 @@ begin
   -- ------------------------------------------------------------ default privileges
   --
   -- Without this, the next `create function` silently re-opens the hole.
-  if exists (
-    select 1
-      from pg_default_acl d
-      join pg_namespace ns on ns.oid = d.defaclnamespace
-     where ns.nspname = 'public'
-       and d.defaclobjtype = 'f'
-       and array_to_string(d.defaclacl, ',') like '%=X/%'
-       and array_to_string(d.defaclacl, ',') like '%"=X%'
-  ) then
-    raise exception 'FAIL: schema default still grants EXECUTE on new functions to PUBLIC';
+  --
+  -- Checked by behaviour, not by reading pg_default_acl. The first version
+  -- of this assertion looked for a schema-level ACL entry and passed while
+  -- new functions were still granted to PUBLIC -- a per-schema revoke
+  -- cannot override the global default, which is the one that applies.
+  -- So: make a function, see what it got, throw it away.
+  create function public.zz_default_privilege_probe() returns int
+    language sql as 'select 1';
+  if has_function_privilege('public', 'public.zz_default_privilege_probe()', 'execute')
+     or has_function_privilege('anon', 'public.zz_default_privilege_probe()', 'execute')
+     or has_function_privilege('authenticated', 'public.zz_default_privilege_probe()', 'execute')
+  then
+    drop function public.zz_default_privilege_probe();
+    raise exception 'FAIL: a newly created function is executable by a client role by default';
   end if;
-  raise notice 'ok   schema default no longer grants EXECUTE to PUBLIC';
+  drop function public.zz_default_privilege_probe();
+  raise notice 'ok   new functions are owner-only until explicitly granted';
 
   -- ------------------------------------------------------------ still usable
   --
@@ -120,7 +129,10 @@ begin
       'job_is_mine', 'job_participant', 'has_live_offer',
       'job_items_editable', 'is_active_job_counterparty',
       'job_receipt_uploadable', 'register_push_token',
-      'unregister_push_token', 'generate_job_reference', 'bump_landmark'
+      'unregister_push_token', 'generate_job_reference', 'bump_landmark',
+      'has_permission', 'my_permissions', 'can_manage_user', 'role_is_mine',
+      'list_users', 'list_roles', 'create_role', 'update_role', 'delete_role',
+      'set_user_roles', 'set_user_blocked', 'update_user_profile'
     ]) as fn
     where not exists (
       select 1 from pg_proc p
@@ -158,7 +170,8 @@ begin
      where ns.nspname = 'public'
        and c.relkind = 'r'
        and c.relname in ('wallet_transactions', 'job_events', 'job_offers',
-                         'driver_locations', 'fare_config')
+                         'driver_locations', 'fare_config', 'auth_attempts',
+                         'permissions', 'roles', 'role_permissions', 'user_roles')
        and (
          has_table_privilege('anon', c.oid, 'insert')
          or has_table_privilege('anon', c.oid, 'update')

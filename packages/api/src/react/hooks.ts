@@ -14,6 +14,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { JobStatus, JobType } from '@fetch/core';
 
 import type { CreateJobInput } from '../api';
+import type { CredentialsPatch, NewUserInput, PermissionKey } from '../types';
 import { useApi, useSessionUser } from './provider';
 
 export const qk = {
@@ -36,6 +37,13 @@ export const qk = {
   documents: ['driver-documents'] as const,
   board: ['dispatch-board'] as const,
   roster: ['dispatch-roster'] as const,
+  // Keyed by user so one account's permissions are never shown to the next
+  // person who signs in on the same browser.
+  myPermissions: (userId: string | null) => ['my-permissions', userId] as const,
+  permissionCatalogue: ['permission-catalogue'] as const,
+  roles: ['roles'] as const,
+  users: (search: string) => ['users', search] as const,
+  allUsers: ['users'] as const,
 };
 
 // ---------------------------------------------------------------- shared
@@ -497,4 +505,138 @@ export function useRecordTopup() {
     }) => api.dispatch.recordTopup(driverId, amountCentavos, note ?? ''),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.roster }),
   });
+}
+
+// ---------------------------------------------------------------- access control
+
+export function useMyPermissions() {
+  const api = useApi();
+  const { userId } = useSessionUser();
+  return useQuery({
+    queryKey: qk.myPermissions(userId),
+    queryFn: () => api.access.mine(),
+    enabled: !!userId,
+    // Re-checked on focus: an admin removing a role should not wait for a
+    // reload to take the menu item away.
+    refetchOnWindowFocus: true,
+  });
+}
+
+/** True while loading, so a gate does not flash "no access" before it knows. */
+export function useCan(permission: PermissionKey): { allowed: boolean; loading: boolean } {
+  const { data, isLoading } = useMyPermissions();
+  return { allowed: !!data?.includes(permission), loading: isLoading };
+}
+
+export function usePermissionCatalogue() {
+  const api = useApi();
+  return useQuery({
+    queryKey: qk.permissionCatalogue,
+    queryFn: () => api.access.catalogue(),
+    staleTime: 60 * 60_000,
+  });
+}
+
+export function useRoles() {
+  const api = useApi();
+  return useQuery({ queryKey: qk.roles, queryFn: () => api.access.roles() });
+}
+
+export function useDirectoryUsers(search: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: qk.users(search),
+    queryFn: () => api.access.users(search),
+    placeholderData: (previous) => previous,
+  });
+}
+
+function useAccessMutation<TVars>(fn: (vars: TVars) => Promise<unknown>) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: async () => {
+      // Roles and users reference each other (role user counts, user role
+      // badges, and possibly the caller's own permissions), so refresh all.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: qk.roles }),
+        queryClient.invalidateQueries({ queryKey: qk.allUsers }),
+        queryClient.invalidateQueries({ queryKey: ['my-permissions'] }),
+      ]);
+    },
+  });
+}
+
+export function useCreateRole() {
+  const api = useApi();
+  return useAccessMutation(
+    (input: { key: string; name: string; description: string; permissions: PermissionKey[] }) =>
+      api.access.createRole(input),
+  );
+}
+
+export function useUpdateRole() {
+  const api = useApi();
+  return useAccessMutation(
+    ({
+      roleId,
+      ...input
+    }: {
+      roleId: string;
+      name: string;
+      description: string;
+      permissions: PermissionKey[];
+    }) => api.access.updateRole(roleId, input),
+  );
+}
+
+export function useDeleteRole() {
+  const api = useApi();
+  return useAccessMutation((roleId: string) => api.access.deleteRole(roleId));
+}
+
+export function useCreateUser() {
+  const api = useApi();
+  return useAccessMutation((input: NewUserInput) => api.access.createUser(input));
+}
+
+/**
+ * One save button, up to three writes: profile and roles are RPCs, login
+ * details need the edge function. Each is skipped when unchanged, and they
+ * run in that order so a rejected role change leaves the name edit saved
+ * rather than half-applying credentials first.
+ */
+export function useUpdateUser() {
+  const api = useApi();
+  return useAccessMutation(
+    async ({
+      userId,
+      profile,
+      roleIds,
+      credentials,
+    }: {
+      userId: string;
+      profile?: { fullName: string; notes: string };
+      roleIds?: string[];
+      credentials?: CredentialsPatch;
+    }) => {
+      if (profile) await api.access.updateProfile(userId, profile);
+      if (roleIds) await api.access.setRoles(userId, roleIds);
+      if (credentials && Object.keys(credentials).length > 0) {
+        await api.access.updateCredentials(userId, credentials);
+      }
+    },
+  );
+}
+
+export function useSetUserBlocked() {
+  const api = useApi();
+  return useAccessMutation(({ userId, blocked }: { userId: string; blocked: boolean }) =>
+    api.access.setBlocked(userId, blocked),
+  );
+}
+
+export function useDeleteUser() {
+  const api = useApi();
+  return useAccessMutation((userId: string) => api.access.deleteUser(userId));
 }

@@ -9,8 +9,11 @@ import { Loading, ThemeProvider, useTheme } from '@fetch/ui';
 
 import { api } from '@/lib/supabase';
 
+/** Screens a signed-out user may be on. */
+const AUTH_SCREENS = new Set(['sign-in', 'forgot-password']);
+
 /**
- * Sends a signed-out user to the phone screen and a signed-in user out of
+ * Sends a signed-out user to the sign-in screen and a signed-in user out of
  * it. Lives in an effect rather than a conditional render so the router
  * owns navigation state -- conditionally swapping the whole tree on auth
  * loses any in-progress booking on a token refresh.
@@ -20,7 +23,7 @@ function AuthGate() {
   const segments = useSegments();
   const router = useRouter();
 
-  const inAuthFlow = segments[0] === 'sign-in';
+  const inAuthFlow = AUTH_SCREENS.has(segments[0] ?? '');
 
   useEffect(() => {
     if (loading) return;
@@ -55,6 +58,7 @@ function Navigator() {
       >
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="sign-in" options={{ headerShown: false }} />
+        <Stack.Screen name="forgot-password" options={{ title: 'Forgot password' }} />
         <Stack.Screen
           name="book/[type]"
           options={{ title: 'Book', presentation: 'card' }}
