@@ -132,7 +132,8 @@ begin
       'unregister_push_token', 'generate_job_reference', 'bump_landmark',
       'has_permission', 'my_permissions', 'can_manage_user', 'role_is_mine',
       'list_users', 'list_roles', 'create_role', 'update_role', 'delete_role',
-      'set_user_roles', 'set_user_blocked', 'update_user_profile'
+      'set_user_roles', 'set_user_blocked', 'update_user_profile',
+      'set_driver_status', 'assign_job'
     ]) as fn
     where not exists (
       select 1 from pg_proc p

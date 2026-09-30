@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 
-import { humanizeError } from '@fetch/api';
+import { type DriverStatus, humanizeError } from '@fetch/api';
 import { useApi, useRecordTopup, useRoster } from '@fetch/api/react';
 import { formatPeso, formatPhPhone, pesos } from '@fetch/core';
 
@@ -47,7 +47,7 @@ export default function DriversPage() {
     }
   }, [roster, filter]);
 
-  async function setStatus(driverId: string, status: string) {
+  async function setStatus(driverId: string, status: DriverStatus) {
     setBusyId(driverId);
     try {
       await api.dispatch.setDriverStatus(driverId, status);

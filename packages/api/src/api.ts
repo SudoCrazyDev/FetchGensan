@@ -20,6 +20,7 @@ import type {
   DriverDocument,
   DriverPosition,
   DriverRosterRow,
+  DriverStatus,
   ErrandItem,
   FareConfigRow,
   FareQuoteRow,
@@ -760,15 +761,16 @@ export function createApi(client: FetchClient) {
     /** Manual assignment. The dispatcher's escape hatch when auto-dispatch
      * has failed and they are on the phone to a driver they trust. */
     async assign(jobId: string, driverId: string): Promise<void> {
-      const { error } = await client
-        .from('jobs')
-        .update({ driver_id: driverId, status: 'assigned' })
-        .eq('id', jobId);
+      const { error } = await client.rpc('assign_job', { p_job_id: jobId, p_driver_id: driverId });
       if (error) throw error;
     },
 
-    async setDriverStatus(driverId: string, status: string): Promise<void> {
-      const { error } = await client.from('drivers').update({ status }).eq('id', driverId);
+    /** Approve, reject or suspend a rider. Needs drivers.manage. */
+    async setDriverStatus(driverId: string, status: DriverStatus): Promise<void> {
+      const { error } = await client.rpc('set_driver_status', {
+        p_driver_id: driverId,
+        p_status: status,
+      });
       if (error) throw error;
     },
 
