@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 
 import { useApi, useProfile, useSessionUser } from '@fetch/api/react';
 
+import { Logo } from './Logo';
 import { Button } from './ui';
 
 const NAV = [
@@ -61,9 +62,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen flex-col">
       <header className="sticky top-0 z-10 border-b border-line bg-bg/95 backdrop-blur">
         <div className="mx-auto flex w-full max-w-[1600px] items-center gap-6 px-6 py-3">
-          <span className="font-bold tracking-tight">
-            Fetch<span className="text-brand">Gensan</span>
-          </span>
+          <Link href="/" aria-label="FetchGensan dispatch board">
+            <Logo />
+          </Link>
 
           <nav className="flex gap-1">
             {NAV.map((item) => (

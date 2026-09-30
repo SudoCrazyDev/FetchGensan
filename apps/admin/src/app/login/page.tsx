@@ -7,6 +7,7 @@ import { humanizeError } from '@fetch/api';
 import { useApi } from '@fetch/api/react';
 import { formatPhPhone, normalizePhPhone } from '@fetch/core';
 
+import { Logo } from '@/components/Logo';
 import { Button, Card } from '@/components/ui';
 
 export default function LoginPage() {
@@ -60,10 +61,9 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center p-6">
       <div className="w-full max-w-sm">
         <div className="mb-6">
-          <h1 className="text-2xl font-bold tracking-tight">
-            Fetch<span className="text-brand">Gensan</span>
+          <h1>
+            <Logo size="lg" label="Dispatch console" />
           </h1>
-          <p className="mt-1 text-sm text-muted">Dispatch console</p>
         </div>
 
         <Card>

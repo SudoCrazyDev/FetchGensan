@@ -1,10 +1,10 @@
 import { useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, TextInput, View } from 'react-native';
+import { Image, KeyboardAvoidingView, Platform, TextInput, View } from 'react-native';
 
 import { humanizeError } from '@fetch/api';
 import { useApi } from '@fetch/api/react';
 import { PHONE_HINT, formatPhPhone, normalizePhPhone } from '@fetch/core';
-import { Button, Field, Row, Screen, Stack, Txt, useTheme } from '@fetch/ui';
+import { Button, Field, Row, Screen, Stack, Txt, brand, useTheme } from '@fetch/ui';
 
 type Step = 'phone' | 'code';
 
@@ -80,11 +80,17 @@ export default function SignIn() {
         <View style={{ flex: 1, justifyContent: 'center' }}>
           <Stack gap={6}>
             <Stack gap={2}>
+              <Image
+                source={require('../assets/brand-mark.png')}
+                style={{ width: 49, height: 64, marginBottom: t.space(2) }}
+                accessibilityIgnoresInvertColors
+                accessible={false}
+              />
               <Txt size="display" weight="700">
-                FetchGensan
+                {brand.name}
               </Txt>
               <Txt tone="muted" size="title">
-                Rides, errands and deliveries. Any hour.
+                {brand.tagline}
               </Txt>
             </Stack>
 

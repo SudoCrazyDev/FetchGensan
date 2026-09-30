@@ -2,6 +2,8 @@
 
 24/7 habal-habal rides, errands and deliveries in General Santos City.
 
+Logo, colours, type and voice: see [`brand/`](brand/README.md).
+
 Three apps, one codebase, one database:
 
 | App | Target | Who uses it |
