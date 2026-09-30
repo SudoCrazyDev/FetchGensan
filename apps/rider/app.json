@@ -16,9 +16,6 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "ph.fetchgensan.rider",
-      "config": {
-        "googleMapsApiKey": "$EXPO_PUBLIC_GOOGLE_MAPS_API_KEY"
-      },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "FetchGensan uses your location to set your pick-up point and show your rider on the map.",
         "ITSAppUsesNonExemptEncryption": false
@@ -36,11 +33,6 @@
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION"
       ],
-      "config": {
-        "googleMaps": {
-          "apiKey": "$EXPO_PUBLIC_GOOGLE_MAPS_API_KEY"
-        }
-      },
       "edgeToEdgeEnabled": true
     },
     "web": {
@@ -61,7 +53,8 @@
         {
           "photosPermission": "FetchGensan needs photo access so you can set a profile picture."
         }
-      ]
+      ],
+      "@maplibre/maplibre-react-native"
     ],
     "experiments": {
       "typedRoutes": true

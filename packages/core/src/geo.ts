@@ -125,3 +125,43 @@ export function looksInServiceArea(p: LatLng): boolean {
     p.longitude <= SERVICE_BOUNDS.maxLng
   );
 }
+
+/**
+ * Base map styles, served by OpenFreeMap: OpenStreetMap data, free, no API
+ * key and no usage cap. Used by MapLibre in the rider app (native and web)
+ * and in the dispatch console.
+ *
+ * Not tile.openstreetmap.org: the OSM Foundation's tile policy forbids
+ * using its servers as an app's map backend. If OpenFreeMap ever needs
+ * replacing, MapTiler and Stadia serve MapLibre styles from a URL too, so
+ * the change is these two strings plus a key.
+ */
+export const MAP_STYLE = {
+  light: 'https://tiles.openfreemap.org/styles/liberty',
+  dark: 'https://tiles.openfreemap.org/styles/dark',
+} as const;
+
+/**
+ * MapLibre thinks in zoom levels, the old Google-style regions in degrees
+ * of longitude on screen. Each zoom level halves the span.
+ */
+export function zoomForDelta(longitudeDelta: number): number {
+  const zoom = Math.log2(360 / Math.max(longitudeDelta, 1e-6));
+  return Math.min(20, Math.max(1, zoom));
+}
+
+/** [west, south, east, north] around some points, or null for none. */
+export function boundsOf(points: LatLng[]): [number, number, number, number] | null {
+  if (points.length === 0) return null;
+  let west = Infinity;
+  let south = Infinity;
+  let east = -Infinity;
+  let north = -Infinity;
+  for (const p of points) {
+    west = Math.min(west, p.longitude);
+    east = Math.max(east, p.longitude);
+    south = Math.min(south, p.latitude);
+    north = Math.max(north, p.latitude);
+  }
+  return [west, south, east, north];
+}

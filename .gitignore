@@ -25,3 +25,6 @@ supabase/.temp/
 # os / editor
 .DS_Store
 Thumbs.db
+
+# Copied from node_modules by scripts/copy-maplibre-worker.mjs
+apps/*/public/maplibre/

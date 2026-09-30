@@ -232,10 +232,28 @@ $$;
 do $$
 declare
   n int;
+  f regprocedure;
 begin
+  -- Mirror hosted Supabase before calling. There, PostGIS's functions are
+  -- owned by supabase_admin and keep their PUBLIC grant, because our
+  -- lockdown cannot revoke what it does not own. Here psql is superuser, so
+  -- the lockdown stripped them too, and the search would fail on PostGIS's
+  -- own geography() cast rather than on anything of ours.
+  for f in
+    select p.oid::regprocedure
+      from pg_proc p
+      join pg_namespace ns on ns.oid = p.pronamespace
+     where ns.nspname = 'public'
+       and exists (select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e')
+  loop
+    execute format('grant execute on function %s to public', f);
+  end loop;
+
   set local role anon;
   begin
-    select count(*) into n from search_landmarks('', null, null, 5);
+    -- With a query AND a location: the location path calls point_of(),
+    -- which is where the second regression hid.
+    select count(*) into n from search_landmarks('mall', 125.1720, 6.1130, 5);
   exception when others then
     reset role;
     raise exception

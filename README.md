@@ -193,6 +193,17 @@ top up to clear it, and `set_online()` refuses them past their credit floor.
 This ships in v1 even though payments are cash-only, because retrofitting it
 later means migrating live money.
 
+**Maps are OpenStreetMap, through MapLibre, with no API key.** The rider
+app uses `@maplibre/maplibre-react-native` on phones and `maplibre-gl` on
+the web; the console uses `maplibre-gl`. Tiles and styles come from
+OpenFreeMap (`MAP_STYLE` in `packages/core/src/geo.ts`), which is free with
+no usage cap. Do not point it at tile.openstreetmap.org: the OSM
+Foundation's tile policy forbids apps from using it as their map server.
+On the web, maplibre-gl's worker is served from each app's `public/maplibre/`
+folder, which `pnpm install` fills (`scripts/copy-maplibre-worker.mjs`).
+Without it the map stays blank with "Worker failed to load". The native map
+needs a development or release build, not Expo Go.
+
 **Addressing is landmark-first.** There is no street-address search anywhere in
 the rider app, on purpose — Gensan addressing is landmark-based and a geocoder
 mostly returns nothing useful for it. Customers pick from saved places and the
@@ -235,6 +246,8 @@ Migrations are ordered and each one is self-contained:
 | `…0930000050_fix_function_default_privileges` | Makes new functions owner-only for real |
 | `…0930000100_rbac` | Permissions, roles, `has_permission()`, the user/role RPCs |
 | `…0930000200_auth_rate_limit` | `auth_attempts` and the sliding-window limiter |
+| `…0930000300_console_driver_actions` | `set_driver_status()`, `assign_job()` for the console |
+| `…0930000400_fix_landmark_search` | Lets `search_landmarks()` call `point_of()` again |
 
 ## Before you launch
 
