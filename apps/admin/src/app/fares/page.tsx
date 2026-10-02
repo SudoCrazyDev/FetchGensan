@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react';
 import { humanizeError } from '@fetch/api';
 import type { FareConfigRow, FareUpdateInput } from '@fetch/api';
 import { useFareHistory, useUpdateFare } from '@fetch/api/admin';
-import { useProfile } from '@fetch/api/react';
+import { useCan } from '@fetch/api/react';
 import {
   JOB_TYPES,
   JOB_TYPE_LABELS,
@@ -18,7 +18,7 @@ import {
 } from '@fetch/core';
 
 import { Shell } from '@/components/Shell';
-import { Card, ErrorNote, FieldRow, PageHeader, SubmitButton, Td, Th, inputClass, manilaTime } from '@/components/ui';
+import { Card, ErrorText, FieldRow, PageHeader, SubmitButton, Td, Th, inputClass, manilaTime } from '@/components/ui';
 
 /** Form state is strings in display units (pesos, km, %), converted on save. */
 interface Draft {
@@ -222,7 +222,7 @@ function FareCard({ row, editable }: { row: FareRow; editable: boolean }) {
         ) : null}
 
         {problem ? <p className="text-sm text-bad">{problem}</p> : null}
-        <ErrorNote error={update.error} />
+        <ErrorText error={update.error} />
         {saved && !dirty ? <p className="text-sm text-ok">Saved. New bookings use this price now.</p> : null}
 
         {editable ? (
@@ -247,8 +247,7 @@ function FareCard({ row, editable }: { row: FareRow; editable: boolean }) {
 
 export default function FaresPage() {
   const { data: history, isLoading, error } = useFareHistory();
-  const { data: me } = useProfile();
-  const editable = me?.role === 'admin';
+  const { allowed: editable } = useCan('pricing.manage');
 
   const active = (history ?? []).filter((r) => r.is_active);
   const retired = (history ?? []).filter((r) => !r.is_active).slice(0, 30);
@@ -261,7 +260,7 @@ export default function FaresPage() {
           subtitle={
             editable
               ? 'Changes apply to new bookings immediately. Bookings already made keep the price they were quoted.'
-              : 'Read only. Only an admin can change prices.'
+              : 'Read only. Changing prices needs the “Edit fares” permission.'
           }
         />
 

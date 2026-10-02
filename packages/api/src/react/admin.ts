@@ -10,7 +10,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import type { JobStatus, JobType } from '@fetch/core';
 
-import type { DriverStatus, FareUpdateInput, UserRole } from '../types';
+import type { DriverStatus, FareUpdateInput } from '../types';
 import { qk } from './hooks';
 import { useApi } from './provider';
 
@@ -187,26 +187,45 @@ export function useCustomers(search: string) {
   });
 }
 
+/**
+ * Deactivate or reactivate an account. RBAC's path: needs users.manage, and
+ * the admin-users edge function also bans the login so a session stops
+ * refreshing.
+ */
 export function useSetBlocked() {
   const api = useApi();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (v: { profileId: string; blocked: boolean; note?: string }) =>
-      api.dispatch.setBlocked(v.profileId, v.blocked, v.note ?? ''),
+    mutationFn: async (v: { profileId: string; blocked: boolean; note?: string }) => {
+      // set_user_blocked() keeps no reason, so a note goes on the profile
+      // first through RBAC's own update_user_profile() -- same permission.
+      const note = v.note?.trim();
+      if (note) {
+        const { data, error } = await api.client
+          .from('admin_customers')
+          .select('full_name, notes')
+          .eq('id', v.profileId)
+          .single();
+        if (error) throw error;
+        const row = data as { full_name: string; notes: string | null };
+        const stamp = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Manila',
+          dateStyle: 'short',
+        }).format(new Date());
+        const line = `[${stamp}] ${v.blocked ? 'deactivated' : 'reactivated'}: ${note}`;
+        await api.access.updateProfile(v.profileId, {
+          fullName: row.full_name,
+          notes: row.notes ? `${row.notes}
+${line}` : line,
+        });
+      }
+      await api.access.setBlocked(v.profileId, v.blocked);
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-customers'] });
       void queryClient.invalidateQueries({ queryKey: qk.roster });
+      void queryClient.invalidateQueries({ queryKey: ['users'] });
     },
-  });
-}
-
-export function useSetRole() {
-  const api = useApi();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (v: { profileId: string; role: UserRole }) =>
-      api.dispatch.setRole(v.profileId, v.role),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-customers'] }),
   });
 }
 

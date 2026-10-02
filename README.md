@@ -2,6 +2,8 @@
 
 24/7 habal-habal rides, errands and deliveries in General Santos City.
 
+Logo, colours, type and voice: see [`brand/`](brand/README.md).
+
 Three apps, one codebase, one database:
 
 | App | Target | Who uses it |
@@ -40,17 +42,26 @@ SUPABASE_SERVICE_ROLE_KEY=your-service-role-key pnpm --filter @fetch/api seed:us
 
 That gives you:
 
-| Number | Role | Notes |
-|---|---|---|
-| `+639170000001` | customer | Maria Santos |
-| `+639170000002` | driver | Approved, already owes a little commission |
-| `+639170000003` | driver | Pending — use this to test the approval gate |
-| `+639170000004` | dispatcher | Signs in to the console |
-| `+639170000005` | admin | Console, plus fares, roles and wallet adjustments |
-| `+639170000006` | — | Not seeded: walk a brand-new customer signup |
-| `+639170000007` | — | Not seeded: walk a brand-new rider signup |
+| Number | Email | Role | Notes |
+|---|---|---|---|
+| `0917 000 0001` | | customer | Maria Santos |
+| `0917 000 0002` | | driver | Approved, already owes a little commission |
+| `0917 000 0003` | | driver | Pending — use this to test the approval gate |
+| `0917 000 0004` | `ops@fetchgensan.test` | Dispatcher | Signs in to the console |
+| `0917 000 0005` | `admin@fetchgensan.test` | Admin | Manages users and roles |
+| `0917 000 0006` | | — | Not seeded: walk a brand-new customer signup |
+| `0917 000 0007` | | — | Not seeded: walk a brand-new rider signup |
 
-On the local stack the OTP for all of them is `123456`.
+Every account's password is `fetchgensan-dev`. Password-reset codes texted to
+these numbers are always `123456` on the local stack; reset emails land in
+Mailpit at http://127.0.0.1:54324.
+
+Sign-in and password reset go through the `auth` edge function, and account
+management through `admin-users`, so serve them alongside the apps:
+
+```bash
+npx supabase functions serve
+```
 
 Then run whichever app you need:
 
@@ -80,6 +91,56 @@ react-query hooks over it.
 
 ### The parts worth understanding before changing anything
 
+**Sign-in is password-based, and goes through our own edge function.**
+`supabase/functions/auth` takes a mobile number (any common format) or an
+email plus a password, and hands back a normal Supabase session, which the
+apps install with `setSession()`. From there supabase-js refreshes it and
+RLS sees the user as usual. The function exists for the rules Supabase Auth
+cannot express:
+
+- Five wrong passwords per account in 15 minutes, then a wait.
+- A per-IP ceiling set high on purpose, because Philippine carriers put
+  thousands of phones behind one CGNAT address.
+- Deactivated accounts are refused even with the right password.
+- "Forgot password" never reveals whether an account exists.
+
+Attempts are counted in `auth_attempts`, keyed by SHA-256 hashes, and only
+the service role can touch that table.
+
+Password reset is a 6-digit code rather than a link, by SMS or email, so it
+works without deep links. A successful reset signs out every other device.
+Accounts from the OTP era have no password yet; the sign-in screen tells
+them to use Forgot password, which doubles as "set a password".
+
+There is no sign-up screen yet, so public sign-up is off in `config.toml`.
+Staff create accounts in the console.
+
+**Staff access is role-based.** `permissions` is a fixed catalogue with one
+row per thing the database actually checks. `roles` bundle permissions and
+admins create them; `user_roles` says who holds what. `has_permission()` is
+the single check, and `is_staff()` is now "holds `console.access`", so every
+policy written before RBAC kept working unchanged. Three rules are enforced
+in SQL, not in the console:
+
+- Nobody can grant a permission they do not hold themselves.
+- Nobody can edit or deactivate someone with more access than they have.
+- There is always at least one active admin.
+
+The built-in Admin role always has every permission, including ones added
+later. `profiles.role` still exists, but it is derived from the roles
+someone holds by trigger, so do not write it directly.
+
+Creating a login, changing a phone, email or password, deactivating and
+deleting all need the Auth Admin API. Those go through
+`supabase/functions/admin-users`, which holds the service-role key but asks
+the database, as the caller, whether each action is allowed before doing
+anything. Everything else is plain RPCs from the browser, so the console
+still never holds a service-role key.
+
+If you add a permission, insert it into `permissions` in a migration,
+enforce it with `has_permission('your.key')` somewhere, and add the key to
+`PermissionKey` in `packages/api/src/types.ts`.
+
 **Money is integer centavos, everywhere.** Database columns are `int`/`bigint`
 centavos; `packages/core/src/money.ts` is the only sanctioned way to convert.
 Floating-point pesos produce a fare of ₱38.500000000000004, which becomes a
@@ -104,6 +165,14 @@ graph so it cannot regress.
 If you add a function, it is owner-only until you name it in that grant list.
 That is the intended direction of failure.
 
+One correction to that migration: its `alter default privileges in schema
+public revoke ... from public` did nothing. PostgreSQL cannot revoke
+per-schema a default that is granted globally, so new functions were still
+PUBLIC-callable. `…0930000050` revokes the global default, and Supabase's
+per-schema grants to anon and authenticated. No function was created in
+between, so nothing was exposed. `02_privilege_test.sql` now creates a
+scratch function and checks what it actually received.
+
 **The fare the client shows is not the fare that gets charged.** The booking
 screen computes an estimate locally so the number updates as the pin moves;
 `create_job()` recomputes it server-side and writes that. A tampered client
@@ -126,6 +195,17 @@ top up to clear it, and `set_online()` refuses them past their credit floor.
 This ships in v1 even though payments are cash-only, because retrofitting it
 later means migrating live money.
 
+**Maps are OpenStreetMap, through MapLibre, with no API key.** The rider
+app uses `@maplibre/maplibre-react-native` on phones and `maplibre-gl` on
+the web; the console uses `maplibre-gl`. Tiles and styles come from
+OpenFreeMap (`MAP_STYLE` in `packages/core/src/geo.ts`), which is free with
+no usage cap. Do not point it at tile.openstreetmap.org: the OSM
+Foundation's tile policy forbids apps from using it as their map server.
+On the web, maplibre-gl's worker is served from each app's `public/maplibre/`
+folder, which `pnpm install` fills (`scripts/copy-maplibre-worker.mjs`).
+Without it the map stays blank with "Worker failed to load". The native map
+needs a development or release build, not Expo Go.
+
 **Addressing is landmark-first.** There is no street-address search anywhere in
 the rider app, on purpose — Gensan addressing is landmark-based and a geocoder
 mostly returns nothing useful for it. Customers pick from saved places and the
@@ -146,9 +226,12 @@ landmark note. That note is what the driver actually reads on arrival.
 | Fares | Per-service pricing with a live price preview; admin-only to change, history kept |
 | Reports | Daily trips, gross, commission, and bookings nobody took |
 
-Every staff action is a `SECURITY DEFINER` RPC that checks the caller's role
-itself (`admin_*` in `…1002000100`). Dispatchers run the board; pricing,
-roles and wallet corrections need `admin`.
+Every staff action is a `SECURITY DEFINER` RPC that checks a permission
+itself with `require_permission()`. Which page needs what: the board,
+bookings, customers, landmarks and reports need `console.access`; approving
+riders `drivers.manage`; top-ups `wallet.topup`; adjustments and credit
+limits `wallet.adjust`; fares `pricing.manage`; Users and Roles their own
+permissions. The built-in Admin role holds all of them.
 
 ## Checks
 
@@ -199,9 +282,15 @@ Migrations are ordered and each one is self-contained:
 | `…001400_landmarks` | Landmark suggestions and fuzzy search |
 | `…001500_push_tokens` | Per-device push registration |
 | `…0908000100_lock_down_function_grants` | Revokes EXECUTE from PUBLIC; grants back an allowlist |
-| `…0908000200_restore_anon_landmark_search` | `is_staff()` for anon, so pre-sign-in landmark search works |
+| `…0908000200_restore_anon_landmark_search` | Lets signed-out users search landmarks again |
+| `…0930000050_fix_function_default_privileges` | Makes new functions owner-only for real |
+| `…0930000100_rbac` | Permissions, roles, `has_permission()`, the user/role RPCs |
+| `…0930000200_auth_rate_limit` | `auth_attempts` and the sliding-window limiter |
+| `…0930000300_console_driver_actions` | `set_driver_status()`, `assign_job()` for the console |
+| `…0930000400_fix_landmark_search` | Lets `search_landmarks()` call `point_of()` again |
 | `…1002000100_admin_console` | Staff RPCs (approve, assign, block, fares, landmarks, wallet), `admin_*` views |
 | `…1002000200_app_flow_fixes` | `register_driver()`, receipt reject/zero-cost cancel, push triggers, grants views need |
+| `…1003000100_reconcile_rbac` | Puts the console RPCs on `has_permission()`, adds `wallet.adjust`, merges the duplicate assign/status RPCs |
 
 ## Before you launch
 
@@ -243,6 +332,21 @@ bite if skipped.
   sign in with their fixed codes -- a test OTP short-circuits before any
   provider call is made. That is the same mechanism `[auth.sms.test_otp]` uses
   in `config.toml` for the local stack.
+- **Configure Auth on the hosted project to match `config.toml`.** The
+  local file does not reach production. In the dashboard:
+  - Turn off "Allow new users to sign up" until a sign-up screen exists.
+  - Keep the Email provider enabled, or staff cannot sign in by email.
+  - Set the minimum password length to 8.
+  - Replace the "Reset password" email template with one that shows
+    `{{ .Token }}`; the apps ask for the code, not a link. Copy
+    `supabase/templates/recovery.html`.
+  - Deploy the functions with `supabase functions deploy auth admin-users`.
+    Both are `verify_jwt = false` on purpose; see the comments in
+    `config.toml`.
+- **Give the first real admin their role.** Nobody can grant Admin except an
+  admin. On a fresh project, create the account, then run once in the SQL
+  editor: `insert into user_roles (user_id, role_id) select '<their uuid>',
+  id from roles where key = 'admin';`
 - **Turn on push notifications.** Nothing reaches a phone that is locked
   until all of this is done:
   1. `eas init` in `apps/driver` and `apps/rider`; put each project id in that
@@ -258,9 +362,6 @@ bite if skipped.
   booking).
 - **Set `EXPO_PUBLIC_DISPATCH_PHONE`** in both apps. Every "Call dispatch"
   button dials it; the fallback is the seeded test number, which rings nobody.
-- **Set `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` and re-run `npx expo prebuild`.**
-  The key used to be a literal string in `app.json`, and the generated
-  `apps/driver/android` folder still has that literal baked in.
 - **Set `DISPATCH_TICK_SECRET`** if you use the `dispatch-tick` edge function
   instead of pg_cron. It fails closed without one, so dispatch retries would
   quietly stop.
@@ -281,6 +382,15 @@ It asserts the things that would cost real money if they broke — first-accept-
 wins under contention, that a driver cannot bypass errand receipt approval,
 that commission lands on the service fee and not on the customer's groceries,
 and that completing a job twice does not charge commission twice.
+
+`03_rbac_test.sql` runs as `authenticated` with a JWT subject set, so grants
+and row-level security apply as they would over the API. It covers:
+
+- Each escalation guard.
+- The last-admin rule.
+- That a deactivated account loses every permission immediately.
+- That `record_topup()` now needs `wallet.topup` rather than any staff role.
+- The rate limiter's window, per-key isolation and clearing.
 
 `02_privilege_test.sql` checks the privilege graph rather than behaviour: that
 no money mover or destructive sweeper is reachable by `anon` or

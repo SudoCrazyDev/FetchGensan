@@ -274,7 +274,7 @@ export function PlacePicker({
             ) : null}
 
             <Row gap={3}>
-              {/* Hidden on web, where PinMap cannot actually place a pin. */}
+              {/* MAP_AVAILABLE is a per-platform switch; both builds have a map today. */}
               {MAP_AVAILABLE ? (
                 <Button
                   label="Drop a pin"

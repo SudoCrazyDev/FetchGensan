@@ -24,7 +24,7 @@ import {
   Badge,
   Button,
   Card,
-  ErrorNote,
+  ErrorText,
   PageHeader,
   PromptDialog,
   inputClass,
@@ -192,7 +192,7 @@ export default function JobDetailPage() {
                 Assign
               </Button>
             </div>
-            <ErrorNote error={assign.error} />
+            <ErrorText error={assign.error} />
           </Card>
         ) : null}
 
@@ -367,7 +367,7 @@ export default function JobDetailPage() {
                   </span>
                 )}
               </div>
-              <ErrorNote error={override.error} />
+              <ErrorText error={override.error} />
             </Card>
           ) : null}
         </div>

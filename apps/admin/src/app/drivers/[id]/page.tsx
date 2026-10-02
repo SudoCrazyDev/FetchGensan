@@ -15,7 +15,7 @@ import {
   useSetDriverStatus,
   useWalletAdjustment,
 } from '@fetch/api/admin';
-import { useProfile } from '@fetch/api/react';
+import { useCan } from '@fetch/api/react';
 import { formatPeso, formatPhPhone, pesos } from '@fetch/core';
 
 import { JobsTable } from '@/components/JobsTable';
@@ -25,7 +25,7 @@ import {
   Badge,
   Button,
   Card,
-  ErrorNote,
+  ErrorText,
   PageHeader,
   PromptDialog,
   Stat,
@@ -73,8 +73,10 @@ export default function DriverDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { data, isLoading, error } = useAdminDriver(id);
   const { data: jobs } = useAdminJobs({ driverId: id }, 25);
-  const { data: me } = useProfile();
-  const isAdmin = me?.role === 'admin';
+  const { allowed: canAdjust } = useCan('wallet.adjust');
+  const { allowed: canTopup } = useCan('wallet.topup');
+  const { allowed: canManageDrivers } = useCan('drivers.manage');
+  const { allowed: canManageUsers } = useCan('users.manage');
 
   const review = useReviewDocument();
   const setStatus = useSetDriverStatus();
@@ -152,7 +154,7 @@ export default function DriverDetailPage() {
           }
           actions={
             <>
-              {roster.status === 'approved' ? (
+              {!canManageDrivers ? null : roster.status === 'approved' ? (
                 <Button
                   variant="danger"
                   onClick={() => setDialog({ kind: 'status', status: 'suspended' })}
@@ -167,7 +169,7 @@ export default function DriverDetailPage() {
                   {roster.status === 'pending' ? 'Approve rider' : 'Reinstate'}
                 </Button>
               )}
-              {roster.status === 'pending' ? (
+              {canManageDrivers && roster.status === 'pending' ? (
                 <Button
                   variant="danger"
                   onClick={() => setDialog({ kind: 'status', status: 'rejected' })}
@@ -175,24 +177,24 @@ export default function DriverDetailPage() {
                   Reject
                 </Button>
               ) : null}
-              {roster.is_blocked ? (
+              {!canManageUsers ? null : roster.is_blocked ? (
                 <Button
                   variant="secondary"
                   disabled={setBlocked.isPending}
                   onClick={() => setBlocked.mutate({ profileId: id, blocked: false })}
                 >
-                  Unblock account
+                  Reactivate account
                 </Button>
               ) : (
                 <Button variant="danger" onClick={() => setDialog({ kind: 'block' })}>
-                  Block account
+                  Deactivate account
                 </Button>
               )}
             </>
           }
         />
 
-        <ErrorNote error={setStatus.error && dialog === null ? setStatus.error : null} />
+        <ErrorText error={setStatus.error && dialog === null ? setStatus.error : null} />
 
         {roster.status === 'pending' && unapprovedRequired.length > 0 ? (
           <Card className="border-brand/50 bg-brand/5">
@@ -261,8 +263,10 @@ export default function DriverDetailPage() {
                   : 'Nothing owed.'}
             </p>
             <div className="flex flex-wrap gap-2">
-              <Button onClick={() => setDialog({ kind: 'topup' })}>Record cash top-up</Button>
-              {isAdmin ? (
+              {canTopup ? (
+                <Button onClick={() => setDialog({ kind: 'topup' })}>Record cash top-up</Button>
+              ) : null}
+              {canAdjust ? (
                 <>
                   <Button variant="secondary" onClick={() => setDialog({ kind: 'adjust' })}>
                     Adjustment…
@@ -273,7 +277,7 @@ export default function DriverDetailPage() {
                 </>
               ) : (
                 <span className="self-center text-xs text-muted">
-                  Adjustments and credit limits need an admin.
+                  Adjustments and credit limits need the “Correct wallets” permission.
                 </span>
               )}
             </div>
@@ -362,7 +366,7 @@ export default function DriverDetailPage() {
               })}
             </div>
           )}
-          <ErrorNote error={dialog === null ? review.error : null} />
+          <ErrorText error={dialog === null ? review.error : null} />
         </Card>
 
         {/* ------------------------------------------------ ledger */}
@@ -462,17 +466,17 @@ export default function DriverDetailPage() {
 
       <PromptDialog
         open={dialog?.kind === 'block'}
-        title="Block this account?"
-        description="A blocked rider is taken offline and cannot receive bookings. Use Suspend for a temporary stop."
+        title="Deactivate this account?"
+        description="They are signed out everywhere and cannot sign back in or receive bookings. Use Suspend for a temporary stop from riding."
         label="Reason"
-        confirmLabel="Block"
+        confirmLabel="Deactivate"
         danger
         required
         busy={setBlocked.isPending}
         error={setBlocked.error ? humanizeError(setBlocked.error) : null}
         onCancel={close}
         onConfirm={(note) =>
-          setBlocked.mutate({ profileId: id, blocked: true, note: note.trim() }, { onSuccess: close })
+          setBlocked.mutate({ profileId: id, blocked: true, note }, { onSuccess: close })
         }
       />
 

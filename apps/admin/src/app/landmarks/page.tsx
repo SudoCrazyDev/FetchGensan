@@ -12,7 +12,7 @@ import {
   Badge,
   Button,
   Card,
-  ErrorNote,
+  ErrorText,
   FieldRow,
   Modal,
   PageHeader,
@@ -147,7 +147,7 @@ function LandmarkForm({
         Offer this landmark to customers
       </label>
 
-      <ErrorNote error={save.error} />
+      <ErrorText error={save.error} />
 
       <div className="flex justify-end gap-2">
         <Button variant="secondary" onClick={onDone}>
@@ -243,19 +243,18 @@ export default function LandmarksPage() {
         </Card>
       </div>
 
-      <Modal
-        open={editing !== null}
-        title={editing === 'new' ? 'Add a landmark' : 'Edit landmark'}
-        onClose={() => setEditing(null)}
-      >
-        {editing !== null ? (
+      {editing !== null ? (
+        <Modal
+          title={editing === 'new' ? 'Add a landmark' : 'Edit landmark'}
+          onClose={() => setEditing(null)}
+        >
           <LandmarkForm
             key={editing === 'new' ? 'new' : editing.id}
             landmark={editing === 'new' ? null : editing}
             onDone={() => setEditing(null)}
           />
-        ) : null}
-      </Modal>
+        </Modal>
+      ) : null}
     </Shell>
   );
 }

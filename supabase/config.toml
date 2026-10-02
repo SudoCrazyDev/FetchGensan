@@ -39,13 +39,33 @@ additional_redirect_urls = ["fetchgensan://", "http://127.0.0.1:3000"]
 jwt_expiry = 3600
 enable_refresh_token_rotation = true
 refresh_token_reuse_interval = 10
-# Nobody in Gensan signs up with an email address.
-enable_signup = true
+# Matches PASSWORD_MIN_LENGTH in supabase/functions/_shared/identifier.ts,
+# which checks first and explains itself better; this is the backstop for
+# anything that reaches Auth directly.
+minimum_password_length = 8
+# Public sign-up is OFF until the apps have a sign-up screen. Accounts are
+# created by staff in the console (supabase/functions/admin-users), which
+# uses the Admin API and is unaffected by this switch. Turning it on later
+# re-opens phone sign-up; email sign-up stays closed by enable_confirmations
+# below unless that changes too.
+enable_signup = false
 enable_anonymous_sign_ins = false
 
+# The email PROVIDER must be on for staff to sign in with an email and
+# password -- in the CLI, `enable_signup = false` here disables email logins
+# altogether, not just sign-ups. Sign-ups are governed by [auth] above, and
+# confirmations stay on so an email address can never be claimed without
+# access to its inbox; staff accounts are created already confirmed.
 [auth.email]
-enable_signup = false
-enable_confirmations = false
+enable_signup = true
+enable_confirmations = true
+# Staff sign in with email; reset codes are typed into the app, not
+# clicked, so the recovery email carries the 6-digit code.
+otp_length = 6
+
+[auth.email.template.recovery]
+subject = "Your FetchGensan password reset code"
+content_path = "./supabase/templates/recovery.html"
 
 # Phone OTP is the primary and effectively only sign-in path.
 [auth.sms]
@@ -91,4 +111,13 @@ inspector_port = 8083
 verify_jwt = false
 
 [functions.push-notify]
+verify_jwt = false
+
+# Nobody calling sign-in or password reset has a session yet.
+[functions.auth]
+verify_jwt = false
+
+# Verifies the caller itself (admin.auth.getUser) and then asks the database
+# what they may do, so the gateway check would only duplicate that.
+[functions.admin-users]
 verify_jwt = false

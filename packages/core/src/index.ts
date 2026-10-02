@@ -4,3 +4,4 @@ export * from './phone';
 export * from './job-state';
 export * from './fare';
 export * from './schemas';
+export * from './auth';

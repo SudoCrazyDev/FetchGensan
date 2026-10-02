@@ -7,7 +7,7 @@
  * a two-year-old Android.
  */
 
-import { type ReactNode, forwardRef } from 'react';
+import { type ReactNode, forwardRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -141,6 +141,8 @@ export interface TxtProps {
   align?: TextStyle['textAlign'];
   numberOfLines?: number;
   style?: StyleProp<TextStyle>;
+  /** Announce changes to screen readers -- for errors that appear after a tap. */
+  live?: boolean;
 }
 
 export function Txt({
@@ -151,11 +153,14 @@ export function Txt({
   align,
   numberOfLines,
   style,
+  live = false,
 }: TxtProps) {
   const t = useTheme();
   return (
     <Text
       numberOfLines={numberOfLines}
+      accessibilityLiveRegion={live ? 'polite' : undefined}
+      role={live ? 'alert' : undefined}
       style={[
         {
           fontSize: t.font[size],
@@ -378,6 +383,89 @@ export const Field = forwardRef<TextInput, FieldProps>(function Field(
         ]}
         {...rest}
       />
+      {error ? (
+        <Txt size="small" tone="danger">
+          {error}
+        </Txt>
+      ) : hint ? (
+        <Txt size="small" tone="muted">
+          {hint}
+        </Txt>
+      ) : null}
+    </View>
+  );
+});
+
+export interface PasswordFieldProps extends Omit<TextInputProps, 'secureTextEntry'> {
+  label?: string;
+  error?: string | null;
+  hint?: string;
+}
+
+/**
+ * A password input with a Show/Hide toggle. On a phone keyboard, in the
+ * sun, with a thumb, typing blind is how people lock themselves out; being
+ * able to check what they typed matters more here than on a desktop.
+ */
+export const PasswordField = forwardRef<TextInput, PasswordFieldProps>(function PasswordField(
+  { label, error, hint, style, ...rest },
+  ref,
+) {
+  const t = useTheme();
+  const [visible, setVisible] = useState(false);
+
+  return (
+    <View style={{ gap: t.space(1.5) }}>
+      {label ? (
+        <Txt size="small" weight="600" tone="muted">
+          {label}
+        </Txt>
+      ) : null}
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          minHeight: MIN_TOUCH,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: error ? t.color.danger : t.color.border,
+          backgroundColor: t.color.surface,
+          borderRadius: t.radius.md,
+        }}
+      >
+        <TextInput
+          ref={ref}
+          placeholderTextColor={t.color.textMuted}
+          secureTextEntry={!visible}
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={[
+            {
+              flex: 1,
+              paddingHorizontal: t.space(3.5),
+              paddingVertical: t.space(3),
+              fontSize: t.font.body,
+              color: t.color.text,
+            },
+            style,
+          ]}
+          {...rest}
+        />
+        <Pressable
+          onPress={() => setVisible((v) => !v)}
+          accessibilityRole="button"
+          accessibilityLabel={visible ? 'Hide password' : 'Show password'}
+          hitSlop={8}
+          style={{
+            minHeight: MIN_TOUCH,
+            justifyContent: 'center',
+            paddingHorizontal: t.space(3.5),
+          }}
+        >
+          <Txt size="small" weight="700" tone="primary">
+            {visible ? 'Hide' : 'Show'}
+          </Txt>
+        </Pressable>
+      </View>
       {error ? (
         <Txt size="small" tone="danger">
           {error}

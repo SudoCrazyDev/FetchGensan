@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   GENSAN_CENTER,
+  zoomForDelta,
   type LatLng,
   estimateRoadMeters,
   estimateSeconds,
@@ -111,5 +112,13 @@ describe('service area', () => {
     expect(looksInServiceArea({ latitude: 7.1907, longitude: 125.4553 })).toBe(false);
     // Manila.
     expect(looksInServiceArea({ latitude: 14.5995, longitude: 120.9842 })).toBe(false);
+  });
+});
+
+describe('zoomForDelta', () => {
+  it('maps a city-sized span to a street-level zoom', () => {
+    expect(zoomForDelta(360)).toBe(1);
+    expect(zoomForDelta(0.02)).toBeCloseTo(14.1, 1);
+    expect(zoomForDelta(0)).toBe(20);
   });
 });

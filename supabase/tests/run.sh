@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Applies every migration to a throwaway Postgres+PostGIS container and then
-# runs the assertions in 01_dispatch_test.sql.
+# runs the assertions in the numbered test files.
 #
 # Why this exists alongside `supabase db reset`: it needs only Docker, runs
 # in about twenty seconds, and it is what catches the errors that a
@@ -82,6 +82,8 @@ done
 run_sql_file "seed.sql" "$here/../seed.sql"
 run_sql_file "dispatch assertions" "$here/01_dispatch_test.sql"
 run_sql_file "privilege assertions" "$here/02_privilege_test.sql"
+run_sql_file "rbac and rate-limit assertions" "$here/03_rbac_test.sql"
+run_sql_file "console action assertions" "$here/04_console_actions_test.sql"
 
 echo
 echo "==> all migrations applied and assertions passed"

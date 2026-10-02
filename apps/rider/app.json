@@ -11,7 +11,7 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0F172A"
+      "backgroundColor": "#F98A15"
     },
     "ios": {
       "supportsTablet": false,
@@ -55,6 +55,7 @@
           "photosPermission": "FetchGensan needs photo access so you can set a profile picture."
         }
       ],
+      "@maplibre/maplibre-react-native",
       [
         "expo-notifications",
         {

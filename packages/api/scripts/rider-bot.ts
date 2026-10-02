@@ -39,8 +39,13 @@ async function main() {
       },
     }),
   );
-  await api.auth.requestOtp('+639170000002');
-  await api.auth.verifyOtp('+639170000002', '123456');
+  await api.client.auth.signInWithOtp({ phone: '+639170000002' });
+  const { error } = await api.client.auth.verifyOtp({
+    phone: '+639170000002',
+    token: '123456',
+    type: 'sms',
+  });
+  if (error) throw error;
 
   await api.driver.ping(HERE);
   await api.driver.setOnline(true);

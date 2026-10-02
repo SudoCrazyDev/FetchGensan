@@ -39,8 +39,14 @@ async function as(phone: string) {
       },
     }),
   );
-  await api.auth.requestOtp(phone);
-  const { user } = await api.auth.verifyOtp(phone, '123456');
+  // Phone OTP at the Auth level: the local stack's test codes accept it,
+  // and it creates the unseeded numbers on first use.
+  await api.client.auth.signInWithOtp({ phone });
+  const {
+    data: { user },
+    error,
+  } = await api.client.auth.verifyOtp({ phone, token: '123456', type: 'sms' });
+  if (error) throw error;
   return Object.assign(api, { userId: user!.id });
 }
 

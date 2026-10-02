@@ -1,19 +1,19 @@
 /**
- * Centre-pin map for choosing a spot. Native implementation.
+ * Centre-pin map for choosing a spot. Native implementation (MapLibre).
  *
- * See PinMap.web.tsx for the web build -- react-native-maps has no web
- * support at all, so the two platforms genuinely need different code here
- * rather than a shared component with a flag.
+ * See PinMap.web.tsx for the web build, which uses maplibre-gl directly:
+ * the React Native binding has no web target.
  */
 
+import { Camera, Map, UserLocation } from '@maplibre/maplibre-react-native';
 import { View } from 'react-native';
-import MapView, { PROVIDER_GOOGLE, type Region } from 'react-native-maps';
 
-import type { LatLng } from '@fetch/core';
+import { type LatLng, MAP_STYLE, zoomForDelta } from '@fetch/core';
 import { Txt, useTheme } from '@fetch/ui';
 
 export interface PinMapProps {
-  region: Region;
+  /** Where the map opens. Read once on mount, like an initial region. */
+  region: LatLng & { longitudeDelta?: number };
   onPinChange: (p: LatLng) => void;
   showsUserLocation?: boolean;
 }
@@ -23,17 +23,27 @@ export function PinMap({ region, onPinChange, showsUserLocation = true }: PinMap
 
   return (
     <View style={{ flex: 1, borderRadius: t.radius.lg, overflow: 'hidden' }}>
-      <MapView
-        provider={PROVIDER_GOOGLE}
+      <Map
         style={{ flex: 1 }}
-        initialRegion={region}
-        onRegionChangeComplete={(r) =>
-          onPinChange({ latitude: r.latitude, longitude: r.longitude })
-        }
-        showsUserLocation={showsUserLocation}
-        showsMyLocationButton
-        toolbarEnabled={false}
-      />
+        mapStyle={t.dark ? MAP_STYLE.dark : MAP_STYLE.light}
+        logo={false}
+        compass={false}
+        touchRotate={false}
+        touchPitch={false}
+        attributionPosition={{ bottom: 8, right: 8 }}
+        onRegionDidChange={(e) => {
+          const [longitude, latitude] = e.nativeEvent.center;
+          onPinChange({ latitude, longitude });
+        }}
+      >
+        <Camera
+          initialViewState={{
+            center: [region.longitude, region.latitude],
+            zoom: zoomForDelta(region.longitudeDelta ?? 0.02),
+          }}
+        />
+        {showsUserLocation ? <UserLocation /> : null}
+      </Map>
       {/*
         A fixed pin over a moving map, not a draggable marker. Dragging a
         marker puts the customer's thumb directly over the thing they are

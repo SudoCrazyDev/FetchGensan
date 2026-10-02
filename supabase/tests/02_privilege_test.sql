@@ -44,7 +44,11 @@ begin
          'push_on_manual_assign',
          -- internal guards for the admin RPCs
          'require_staff',
-         'require_admin'
+         'require_admin',
+         'auth_rate_limit_hit',
+         'auth_rate_limit_clear',
+         'prune_auth_attempts',
+         'refresh_account_type'
        )
        and (
          has_function_privilege('anon', p.oid, 'execute')
@@ -101,18 +105,23 @@ begin
   -- ------------------------------------------------------------ default privileges
   --
   -- Without this, the next `create function` silently re-opens the hole.
-  if exists (
-    select 1
-      from pg_default_acl d
-      join pg_namespace ns on ns.oid = d.defaclnamespace
-     where ns.nspname = 'public'
-       and d.defaclobjtype = 'f'
-       and array_to_string(d.defaclacl, ',') like '%=X/%'
-       and array_to_string(d.defaclacl, ',') like '%"=X%'
-  ) then
-    raise exception 'FAIL: schema default still grants EXECUTE on new functions to PUBLIC';
+  --
+  -- Checked by behaviour, not by reading pg_default_acl. The first version
+  -- of this assertion looked for a schema-level ACL entry and passed while
+  -- new functions were still granted to PUBLIC -- a per-schema revoke
+  -- cannot override the global default, which is the one that applies.
+  -- So: make a function, see what it got, throw it away.
+  create function public.zz_default_privilege_probe() returns int
+    language sql as 'select 1';
+  if has_function_privilege('public', 'public.zz_default_privilege_probe()', 'execute')
+     or has_function_privilege('anon', 'public.zz_default_privilege_probe()', 'execute')
+     or has_function_privilege('authenticated', 'public.zz_default_privilege_probe()', 'execute')
+  then
+    drop function public.zz_default_privilege_probe();
+    raise exception 'FAIL: a newly created function is executable by a client role by default';
   end if;
-  raise notice 'ok   schema default no longer grants EXECUTE to PUBLIC';
+  drop function public.zz_default_privilege_probe();
+  raise notice 'ok   new functions are owner-only until explicitly granted';
 
   -- ------------------------------------------------------------ still usable
   --
@@ -138,11 +147,13 @@ begin
       'active_fare_config', 'is_night_hours',
       -- 20261002000200: driver signup, errand review, contact
       'register_driver', 'reject_errand_total', 'job_customer_contact',
-      -- 20261002000100: the console. Each checks is_staff()/admin inside.
-      'admin_set_driver_status', 'admin_review_document', 'admin_set_credit_floor',
-      'admin_wallet_adjustment', 'admin_assign_job', 'admin_set_blocked',
-      'admin_set_role', 'admin_update_fare', 'admin_upsert_landmark',
-      'admin_daily_stats'
+      -- the console. Each checks has_permission() inside.
+      'admin_review_document', 'admin_set_credit_floor', 'admin_wallet_adjustment',
+      'admin_update_fare', 'admin_upsert_landmark', 'admin_daily_stats',
+      'has_permission', 'my_permissions', 'can_manage_user', 'role_is_mine',
+      'list_users', 'list_roles', 'create_role', 'update_role', 'delete_role',
+      'set_user_roles', 'set_user_blocked', 'update_user_profile',
+      'set_driver_status', 'assign_job'
     ]) as fn
     where not exists (
       select 1 from pg_proc p
@@ -180,7 +191,8 @@ begin
      where ns.nspname = 'public'
        and c.relkind = 'r'
        and c.relname in ('wallet_transactions', 'job_events', 'job_offers',
-                         'driver_locations', 'fare_config')
+                         'driver_locations', 'fare_config', 'auth_attempts',
+                         'permissions', 'roles', 'role_permissions', 'user_roles')
        and (
          has_table_privilege('anon', c.oid, 'insert')
          or has_table_privilege('anon', c.oid, 'update')
@@ -240,10 +252,28 @@ $$;
 do $$
 declare
   n int;
+  f regprocedure;
 begin
+  -- Mirror hosted Supabase before calling. There, PostGIS's functions are
+  -- owned by supabase_admin and keep their PUBLIC grant, because our
+  -- lockdown cannot revoke what it does not own. Here psql is superuser, so
+  -- the lockdown stripped them too, and the search would fail on PostGIS's
+  -- own geography() cast rather than on anything of ours.
+  for f in
+    select p.oid::regprocedure
+      from pg_proc p
+      join pg_namespace ns on ns.oid = p.pronamespace
+     where ns.nspname = 'public'
+       and exists (select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e')
+  loop
+    execute format('grant execute on function %s to public', f);
+  end loop;
+
   set local role anon;
   begin
-    select count(*) into n from search_landmarks('', null, null, 5);
+    -- With a query AND a location: the location path calls point_of(),
+    -- which is where the second regression hid.
+    select count(*) into n from search_landmarks('mall', 125.1720, 6.1130, 5);
   exception when others then
     reset role;
     raise exception

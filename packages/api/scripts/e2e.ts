@@ -82,8 +82,14 @@ function memoryStorage() {
 async function signIn(phone: string): Promise<Api & { userId: string }> {
   const client = createFetchClient({ url: URL_, anonKey: ANON, storage: memoryStorage() });
   const api = createApi(client);
-  await api.auth.requestOtp(phone);
-  const { user } = await api.auth.verifyOtp(phone, OTP);
+  // Phone OTP at the Auth level: the local stack's test codes accept it,
+  // and it creates the unseeded numbers on first use.
+  await api.client.auth.signInWithOtp({ phone });
+  const {
+    data: { user },
+    error,
+  } = await api.client.auth.verifyOtp({ phone, token: OTP, type: 'sms' });
+  if (error) throw error;
   if (!user) throw new Error(`could not sign in ${phone}`);
   return Object.assign(api, { userId: user.id });
 }
@@ -124,7 +130,7 @@ async function main() {
   await rejects(
     maria.dispatch.setDriverStatus(boy.userId, 'approved'),
     'a customer cannot approve a driver',
-    /staff only/,
+    /permission/,
   );
   await rejects(boy.driver.setOnline(true), 'a pending driver cannot go online', /not approved/);
   await ops.dispatch.setDriverStatus(boy.userId, 'approved');
@@ -390,12 +396,12 @@ async function main() {
   await rejects(
     maria.dispatch.assign(manual.id, boy.userId),
     'a customer cannot assign a rider',
-    /staff only/,
+    /permission/,
   );
   await rejects(
     ops.dispatch.assign(manual.id, newbie.userId),
     'an unapproved rider cannot be assigned',
-    /not approved/,
+    /approved/,
   );
   await ops.dispatch.assign(manual.id, boy.userId);
   assert(
@@ -437,7 +443,7 @@ async function main() {
   await rejects(
     ops.dispatch.walletAdjustment(ramon.userId, 500, 'goodwill'),
     'a dispatcher cannot make wallet adjustments',
-    /only an admin/,
+    /permission/,
   );
   await rejects(
     owner.dispatch.walletAdjustment(ramon.userId, 500, ''),
@@ -450,13 +456,20 @@ async function main() {
   // ---------------------------------------------------------- blocking
   console.log('==> blocking a customer');
   const newCustomer = await signIn('+639170000006');
-  await ops.dispatch.setBlocked(newCustomer.userId, true, 'Three no-shows');
+  const block = async (who: Api, blocked: boolean) => {
+    const { error } = await who.client.rpc('set_user_blocked', {
+      p_user_id: newCustomer.userId,
+      p_blocked: blocked,
+    });
+    if (error) throw error;
+  };
+  await rejects(block(ops, true), 'a dispatcher cannot deactivate accounts (users.manage)', /permission/);
+  await block(owner, true);
   await rejects(
     newCustomer.jobs.create({ jobType: 'ride', pickup: GAISANO, dropoff: KCC }),
-    'a blocked customer cannot book',
-    /cannot book/,
+    'a deactivated customer cannot book',
   );
-  await ops.dispatch.setBlocked(newCustomer.userId, false, 'Spoke to them');
+  await block(owner, false);
   ok('unblocking works');
 
   // ---------------------------------------------------------- pricing
@@ -465,7 +478,7 @@ async function main() {
   await rejects(
     ops.dispatch.updateFare('ride', { ...rideFare }),
     'a dispatcher cannot change fares',
-    /only an admin/,
+    /permission/,
   );
   await owner.dispatch.updateFare('ride', { ...rideFare, base_fare_centavos: rideFare.base_fare_centavos + 100 });
   const newFare = (await maria.pricing.configs()).find((c) => c.job_type === 'ride')!;
@@ -510,10 +523,15 @@ async function main() {
 
   // ---------------------------------------------------------- roles
   console.log('==> roles');
-  await rejects(ops.dispatch.setRole(newCustomer.userId, 'dispatcher'),
-    'a dispatcher cannot hand out roles', /only an admin/);
-  await rejects(owner.dispatch.setRole(owner.userId, 'customer'),
-    'an admin cannot demote themselves', /cannot remove your own/);
+  const roles = await owner.access.roles();
+  const dispatcherRole = roles.find((r) => r.key === 'dispatcher')!;
+  await rejects(ops.access.setRoles(newCustomer.userId, [dispatcherRole.id]),
+    'a dispatcher cannot hand out roles', /permission/);
+  await rejects(owner.access.setRoles(owner.userId, []),
+    'the last admin cannot remove their own admin role');
+  const perms = await owner.access.mine();
+  assert(perms.includes('wallet.adjust'), 'admins hold the new wallet.adjust permission');
+  assert(!(await ops.access.mine()).includes('wallet.adjust'), 'dispatchers do not');
 
   // Leave the fleet as the seed left it, so the apps start clean.
   await ramon.driver.setOnline(false);

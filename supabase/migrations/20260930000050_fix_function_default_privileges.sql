@@ -1,0 +1,36 @@
+-- FetchGensan :: make new functions owner-only for real
+--
+-- SECURITY FIX to 20260908000100, found when the first function after it
+-- was added (the RBAC migration) came out executable by PUBLIC.
+--
+-- That migration ran
+--
+--   alter default privileges in schema public revoke execute on functions from public;
+--
+-- and it does nothing. PostgreSQL's docs, ALTER DEFAULT PRIVILEGES: "you
+-- cannot revoke privileges per-schema if they are granted globally". The
+-- EXECUTE-to-PUBLIC default for functions is a GLOBAL default, so a
+-- per-schema revoke is silently a no-op, and every new function kept
+-- inheriting the grant. The privilege test missed it because it checked
+-- for the schema-level ACL entry rather than creating a function and
+-- looking at what it actually got.
+--
+-- No function was created between that migration and this one, so nothing
+-- was exposed. It would have been from here on.
+--
+-- Two defaults to fix:
+--
+--   1. The global PUBLIC grant -- revoked without `in schema`, which is the
+--      form PostgreSQL honours. Applies to functions created by the role
+--      running migrations (postgres), which is every function we write.
+--
+--   2. Supabase additionally configures per-schema defaults that grant
+--      EXECUTE on new functions in `public` to anon and authenticated
+--      directly. Those ARE per-schema entries, so a per-schema revoke
+--      removes them. Harmless where they do not exist (the SQL test stack).
+--
+-- 02_privilege_test.sql now creates a scratch function and checks what it
+-- was granted, so this cannot regress unnoticed.
+
+alter default privileges revoke execute on functions from public;
+alter default privileges in schema public revoke execute on functions from anon, authenticated;

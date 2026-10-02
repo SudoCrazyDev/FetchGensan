@@ -418,3 +418,88 @@ export interface FareUpdateInput {
   commission_bps: number;
   max_item_float_centavos: number;
 }
+
+// ---------------------------------------------------------------- access control
+
+/**
+ * Every permission the database knows about -- the `permissions` table in
+ * 20260930000100_rbac.sql. A key missing from that table is false for
+ * everyone, so keep this list in step with it.
+ */
+export type PermissionKey =
+  | 'console.access'
+  | 'drivers.manage'
+  | 'wallet.topup'
+  | 'wallet.adjust'
+  | 'pricing.manage'
+  | 'users.view'
+  | 'users.manage'
+  | 'roles.manage';
+
+export interface Permission {
+  key: PermissionKey;
+  category: string;
+  label: string;
+  description: string;
+  sort_order: number;
+}
+
+/** A row of `list_roles()`. */
+export interface RoleSummary {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  is_system: boolean;
+  permissions: PermissionKey[];
+  user_count: number;
+  created_at: string;
+}
+
+export interface RoleRef {
+  id: string;
+  key: string;
+  name: string;
+}
+
+/** A row of `list_users()`. */
+export interface DirectoryUser {
+  id: string;
+  full_name: string;
+  phone: string;
+  email: string | null;
+  account_type: UserRole;
+  is_blocked: boolean;
+  is_driver: boolean;
+  notes: string | null;
+  created_at: string;
+  last_sign_in_at: string | null;
+  roles: RoleRef[];
+}
+
+/** What the `auth` edge function answers with after sign-in or reset. */
+export interface SignInResult {
+  user: {
+    id: string;
+    phone: string | null;
+    email: string | null;
+    full_name: string;
+    account_type: UserRole;
+  };
+  permissions: PermissionKey[];
+}
+
+export interface NewUserInput {
+  fullName: string;
+  phone: string;
+  email?: string;
+  password: string;
+  roleIds: string[];
+}
+
+export interface CredentialsPatch {
+  phone?: string;
+  /** An empty string removes the email login. */
+  email?: string;
+  password?: string;
+}

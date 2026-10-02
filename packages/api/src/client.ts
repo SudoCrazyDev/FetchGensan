@@ -60,6 +60,23 @@ export function createFetchClient(opts: ClientOptions): FetchClient {
 }
 
 /**
+ * An error from one of our edge functions. Its `message` is already written
+ * for a person; `code` is stable and meant for branching on.
+ */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+    readonly status: number,
+    /** Seconds until a rate-limited request may be retried. */
+    readonly retryAfter?: number,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+/**
  * Turns a PostgREST/Postgres error into something worth showing a customer.
  *
  * The RPCs raise with real messages ("you already have a booking in
@@ -69,6 +86,7 @@ export function createFetchClient(opts: ClientOptions): FetchClient {
  */
 export function humanizeError(error: unknown): string {
   if (!error) return 'Something went wrong. Please try again.';
+  if (error instanceof ApiError) return error.message;
 
   const message =
     typeof error === 'object' && error !== null && 'message' in error
@@ -100,5 +118,8 @@ export function humanizeError(error: unknown): string {
 
   if (looksInternal) return 'Something went wrong. Please try again.';
 
-  return message.replace(/^ERROR:\s*/i, '');
+  // The RPCs raise lower-case sentences so they read well mid-log; a
+  // screen wants a capital letter.
+  const cleaned = message.replace(/^ERROR:\s*/i, '');
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }

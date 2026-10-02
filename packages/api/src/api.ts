@@ -11,12 +11,14 @@
 import type { JobStatus, JobType, LatLng } from '@fetch/core';
 import { toPoint } from '@fetch/core';
 
-import type { FetchClient } from './client';
+import { ApiError, type FetchClient } from './client';
 import type {
   AdminCustomerRow,
   AdminJobRow,
   AdminLandmarkRow,
   DailyStatsRow,
+  CredentialsPatch,
+  DirectoryUser,
   DispatchBoardRow,
   Driver,
   DriverDocument,
@@ -32,11 +34,15 @@ import type {
   JobEvent,
   JobOffer,
   LandmarkResult,
+  NewUserInput,
   PaymentMethod,
+  Permission,
+  PermissionKey,
   Profile,
   PublicDriverInfo,
+  RoleSummary,
   SavedPlace,
-  UserRole,
+  SignInResult,
   WalletTransaction,
 } from './types';
 
@@ -110,24 +116,86 @@ export interface CreateJobInput {
   scheduledFor?: Date | null;
 }
 
+interface SessionPayload extends SignInResult {
+  session: { access_token: string; refresh_token: string };
+}
+
 export function createApi(client: FetchClient) {
+  /**
+   * Calls one of our edge functions and turns its `{ error, code }` body
+   * into an ApiError, so screens can show the server's own sentence (and
+   * `retryAfter` on a 429) instead of "Edge Function returned a non-2xx".
+   */
+  async function callFunction<T>(
+    path: string,
+    method: 'POST' | 'PATCH' | 'DELETE',
+    body?: Record<string, unknown>,
+  ): Promise<T> {
+    const { data, error } = await client.functions.invoke(path, {
+      method,
+      ...(body ? { body } : {}),
+    });
+    if (!error) return data as T;
+
+    const response = (error as { context?: unknown }).context;
+    if (response instanceof Response) {
+      let payload: { error?: string; code?: string; retry_after?: number } | null = null;
+      try {
+        payload = await response.json();
+      } catch {
+        // not JSON -- fall through to the raw error
+      }
+      if (payload?.error) {
+        throw new ApiError(payload.error, payload.code ?? '', response.status, payload.retry_after);
+      }
+    }
+    throw error;
+  }
+
+  /** Installs a session the auth function issued; supabase-js refreshes it from here. */
+  async function adoptSession(payload: SessionPayload): Promise<SignInResult> {
+    const { error } = await client.auth.setSession({
+      access_token: payload.session.access_token,
+      refresh_token: payload.session.refresh_token,
+    });
+    if (error) throw error;
+    return { user: payload.user, permissions: payload.permissions };
+  }
+
   // ------------------------------------------------------------- auth
 
   const auth = {
-    /** Sends the OTP. `phone` must already be E.164 -- use normalizePhPhone. */
-    async requestOtp(phone: string): Promise<void> {
-      const { error } = await client.auth.signInWithOtp({ phone });
-      if (error) throw error;
+    /**
+     * Mobile number (any common shape) or email, plus password. Goes through
+     * the `auth` edge function rather than straight to Supabase Auth, because
+     * that is where the per-account lockout and the deactivated-account
+     * check live. Throws ApiError with code `invalid_credentials`,
+     * `rate_limited` (see retryAfter) or `account_disabled`.
+     */
+    async signInWithPassword(identifier: string, password: string): Promise<SignInResult> {
+      const payload = await callFunction<SessionPayload>('auth/login', 'POST', {
+        identifier,
+        password,
+      });
+      return adoptSession(payload);
     },
 
-    async verifyOtp(phone: string, token: string) {
-      const { data, error } = await client.auth.verifyOtp({
-        phone,
-        token,
-        type: 'sms',
+    /**
+     * Texts (phone) or emails a 6-digit code. Answers the same whether or
+     * not the account exists.
+     */
+    async requestPasswordReset(identifier: string): Promise<{ channel: 'sms' | 'email' }> {
+      return callFunction('auth/password/forgot', 'POST', { identifier });
+    },
+
+    /** Checks the code, sets the new password, signs out every other device, and signs in here. */
+    async resetPassword(identifier: string, code: string, password: string): Promise<SignInResult> {
+      const payload = await callFunction<SessionPayload>('auth/password/reset', 'POST', {
+        identifier,
+        code,
+        password,
       });
-      if (error) throw error;
-      return data;
+      return adoptSession(payload);
     },
 
     async signOut(): Promise<void> {
@@ -816,7 +884,7 @@ export function createApi(client: FetchClient) {
     /** Manual assignment. The dispatcher's escape hatch when auto-dispatch
      * has failed and they are on the phone to a driver they trust. */
     async assign(jobId: string, driverId: string): Promise<Job> {
-      const { data, error } = await client.rpc('admin_assign_job', {
+      const { data, error } = await client.rpc('assign_job', {
         p_job_id: jobId,
         p_driver_id: driverId,
       });
@@ -824,8 +892,12 @@ export function createApi(client: FetchClient) {
       return data as Job;
     },
 
+    /**
+     * Approve, reject or suspend a rider. Needs drivers.manage. The reason
+     * goes on their record, and is what they are told when it is not good news.
+     */
     async setDriverStatus(driverId: string, status: DriverStatus, reason = ''): Promise<void> {
-      const { error } = await client.rpc('admin_set_driver_status', {
+      const { error } = await client.rpc('set_driver_status', {
         p_driver_id: driverId,
         p_status: status,
         p_reason: reason,
@@ -1006,23 +1078,6 @@ export function createApi(client: FetchClient) {
       return (data ?? []) as AdminCustomerRow[];
     },
 
-    async setBlocked(profileId: string, blocked: boolean, note = ''): Promise<void> {
-      const { error } = await client.rpc('admin_set_blocked', {
-        p_profile_id: profileId,
-        p_blocked: blocked,
-        p_note: note,
-      });
-      if (error) throw error;
-    },
-
-    async setRole(profileId: string, role: UserRole): Promise<void> {
-      const { error } = await client.rpc('admin_set_role', {
-        p_profile_id: profileId,
-        p_role: role,
-      });
-      if (error) throw error;
-    },
-
     /** Every fare row including retired ones, newest first. */
     async fareHistory(): Promise<(FareConfigRow & { effective_from: string })[]> {
       const { data, error } = await client
@@ -1099,7 +1154,115 @@ export function createApi(client: FetchClient) {
     },
   };
 
-  return { client, auth, profile, files, pricing, places, jobs, driver, dispatch };
+  // ------------------------------------------------------------- access control
+
+  const access = {
+    /** The signed-in user's permissions. Drives what the console shows; the database still decides. */
+    async mine(): Promise<PermissionKey[]> {
+      const { data, error } = await client.rpc('my_permissions');
+      if (error) throw error;
+      return (data ?? []) as PermissionKey[];
+    },
+
+    async catalogue(): Promise<Permission[]> {
+      const { data, error } = await client.from('permissions').select('*').order('sort_order');
+      if (error) throw error;
+      return (data ?? []) as Permission[];
+    },
+
+    async roles(): Promise<RoleSummary[]> {
+      const { data, error } = await client.rpc('list_roles');
+      if (error) throw error;
+      return (data ?? []) as RoleSummary[];
+    },
+
+    async createRole(input: {
+      key: string;
+      name: string;
+      description: string;
+      permissions: PermissionKey[];
+    }): Promise<void> {
+      const { error } = await client.rpc('create_role', {
+        p_key: input.key,
+        p_name: input.name,
+        p_description: input.description,
+        p_permissions: input.permissions,
+      });
+      if (error) throw error;
+    },
+
+    async updateRole(
+      roleId: string,
+      input: { name: string; description: string; permissions: PermissionKey[] },
+    ): Promise<void> {
+      const { error } = await client.rpc('update_role', {
+        p_role_id: roleId,
+        p_name: input.name,
+        p_description: input.description,
+        p_permissions: input.permissions,
+      });
+      if (error) throw error;
+    },
+
+    async deleteRole(roleId: string): Promise<void> {
+      const { error } = await client.rpc('delete_role', { p_role_id: roleId });
+      if (error) throw error;
+    },
+
+    async users(search = '', limit = 100, offset = 0): Promise<DirectoryUser[]> {
+      const { data, error } = await client.rpc('list_users', {
+        p_search: search,
+        p_limit: limit,
+        p_offset: offset,
+      });
+      if (error) throw error;
+      return (data ?? []) as DirectoryUser[];
+    },
+
+    /** Needs the Admin API, so it goes through the admin-users edge function. */
+    async createUser(input: NewUserInput): Promise<{ id: string }> {
+      return callFunction('admin-users', 'POST', {
+        full_name: input.fullName,
+        phone: input.phone,
+        email: input.email ?? '',
+        password: input.password,
+        role_ids: input.roleIds,
+      });
+    },
+
+    async updateCredentials(userId: string, patch: CredentialsPatch): Promise<void> {
+      await callFunction(`admin-users/${userId}`, 'PATCH', { ...patch });
+    },
+
+    async updateProfile(userId: string, input: { fullName: string; notes: string }): Promise<void> {
+      const { error } = await client.rpc('update_user_profile', {
+        p_user_id: userId,
+        p_full_name: input.fullName,
+        p_notes: input.notes,
+      });
+      if (error) throw error;
+    },
+
+    async setRoles(userId: string, roleIds: string[]): Promise<void> {
+      const { error } = await client.rpc('set_user_roles', {
+        p_user_id: userId,
+        p_role_ids: roleIds,
+      });
+      if (error) throw error;
+    },
+
+    /** Deactivating also bans the login, so their session stops refreshing. */
+    async setBlocked(userId: string, blocked: boolean): Promise<void> {
+      await callFunction(`admin-users/${userId}/block`, 'POST', { blocked });
+    },
+
+    /** Refused for anyone with booking history; deactivate them instead. */
+    async deleteUser(userId: string): Promise<void> {
+      await callFunction(`admin-users/${userId}`, 'DELETE');
+    },
+  };
+
+  return { client, auth, profile, files, pricing, places, jobs, driver, dispatch, access };
 }
 
 export type Api = ReturnType<typeof createApi>;

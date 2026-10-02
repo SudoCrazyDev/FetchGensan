@@ -14,6 +14,9 @@ import { api } from '@/lib/supabase';
 
 configureNotifications();
 
+/** Screens a signed-out user may be on. */
+const AUTH_SCREENS = new Set(['sign-in', 'forgot-password']);
+
 /**
  * expo-notifications throws on web for this hook ("not available on web"),
  * and the rider app has a web build. Chosen once at module load, so the
@@ -37,7 +40,7 @@ function AuthGate() {
   const segments = useSegments();
   const router = useRouter();
 
-  const inAuthFlow = segments[0] === 'sign-in';
+  const inAuthFlow = AUTH_SCREENS.has(segments[0] ?? '');
   const inOnboarding = segments[0] === 'onboarding';
 
   useEffect(() => {
@@ -100,6 +103,7 @@ function Navigator() {
       >
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="sign-in" options={{ headerShown: false }} />
+        <Stack.Screen name="forgot-password" options={{ title: 'Forgot password' }} />
         <Stack.Screen name="onboarding" options={{ title: 'Set up your account' }} />
         <Stack.Screen name="job" options={{ title: 'Current booking' }} />
         <Stack.Screen name="receipt" options={{ title: 'Receipt' }} />
