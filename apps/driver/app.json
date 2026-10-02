@@ -16,9 +16,6 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "ph.fetchgensan.driver",
-      "config": {
-        "googleMapsApiKey": "$EXPO_PUBLIC_GOOGLE_MAPS_API_KEY"
-      },
       "infoPlist": {
         "UIBackgroundModes": [
           "location",
@@ -49,11 +46,6 @@
         "VIBRATE",
         "RECEIVE_BOOT_COMPLETED"
       ],
-      "config": {
-        "googleMaps": {
-          "apiKey": "$EXPO_PUBLIC_GOOGLE_MAPS_API_KEY"
-        }
-      },
       "edgeToEdgeEnabled": true
     },
     "plugins": [
@@ -85,11 +77,6 @@
     ],
     "experiments": {
       "typedRoutes": true
-    },
-    "extra": {
-      "eas": {
-        "projectId": "00000000-0000-0000-0000-000000000000"
-      }
     }
   }
 }

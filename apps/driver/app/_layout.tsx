@@ -1,6 +1,8 @@
+import * as Notifications from 'expo-notifications';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import { Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -13,9 +15,21 @@ import { api } from '@/lib/supabase';
 configureNotifications();
 
 /**
+ * expo-notifications throws on web for this hook ("not available on web"),
+ * and the rider app has a web build. Chosen once at module load, so the
+ * same hook runs on every render and hook order never changes.
+ */
+const useLastResponse: () => Notifications.NotificationResponse | null | undefined =
+  Platform.OS === 'web' ? () => undefined : Notifications.useLastNotificationResponse;
+
+/**
  * Three destinations, in order of precedence: sign in, finish onboarding,
  * or work. A driver with no `drivers` row cannot go online, so sending them
  * anywhere but onboarding would show a toggle that always fails.
+ *
+ * It only ever pushes a rider INTO onboarding, never out of it. It used to
+ * send anyone with a drivers row back home, and since saving the first step
+ * creates that row, a rider was bounced off the documents step mid-upload.
  */
 function AuthGate() {
   const { userId, loading: sessionLoading } = useSessionUser();
@@ -46,10 +60,22 @@ function AuthGate() {
 
     if (!driver && !inOnboarding) {
       router.replace('/onboarding');
-    } else if (driver && inOnboarding) {
-      router.replace('/');
     }
   }, [userId, sessionLoading, driver, driverLoading, inAuthFlow, inOnboarding, router]);
+
+  // Tapping a push opens the screen it is about. useLastNotificationResponse
+  // also catches the tap that launched the app from cold, which a listener
+  // attached after mount would miss.
+  const lastResponse = useLastResponse();
+  const handled = useRef<string | null>(null);
+  useEffect(() => {
+    if (Platform.OS === 'web' || !lastResponse || !userId || driverLoading) return;
+    const id = lastResponse.notification.request.identifier;
+    if (handled.current === id) return;
+    handled.current = id;
+    const kind = lastResponse.notification.request.content.data?.kind;
+    router.navigate(kind === 'assigned' ? '/job' : '/');
+  }, [lastResponse, userId, driverLoading, router]);
 
   return null;
 }
@@ -78,6 +104,8 @@ function Navigator() {
         <Stack.Screen name="job" options={{ title: 'Current booking' }} />
         <Stack.Screen name="receipt" options={{ title: 'Receipt' }} />
         <Stack.Screen name="wallet" options={{ title: 'Earnings & wallet' }} />
+        <Stack.Screen name="profile" options={{ title: 'Account' }} />
+        <Stack.Screen name="rate" options={{ title: 'Rate the customer' }} />
       </Stack>
     </>
   );

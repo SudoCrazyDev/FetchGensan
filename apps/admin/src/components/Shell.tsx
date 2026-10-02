@@ -10,8 +10,17 @@ import { Button } from './ui';
 
 const NAV = [
   { href: '/', label: 'Dispatch board' },
-  { href: '/drivers', label: 'Drivers' },
+  { href: '/jobs', label: 'Bookings' },
+  { href: '/drivers', label: 'Riders' },
+  { href: '/customers', label: 'Customers' },
+  { href: '/landmarks', label: 'Landmarks' },
+  { href: '/fares', label: 'Fares' },
+  { href: '/reports', label: 'Reports' },
 ];
+
+function isActive(pathname: string, href: string) {
+  return href === '/' ? pathname === '/' : pathname === href || pathname.startsWith(`${href}/`);
+}
 
 /**
  * Auth and role gate for the console.
@@ -60,18 +69,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col">
       <header className="sticky top-0 z-10 border-b border-line bg-bg/95 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-[1600px] items-center gap-6 px-6 py-3">
+        <div className="mx-auto flex w-full max-w-[1600px] flex-wrap items-center gap-x-6 gap-y-2 px-6 py-3">
           <span className="font-bold tracking-tight">
             Fetch<span className="text-brand">Gensan</span>
           </span>
 
-          <nav className="flex gap-1">
+          <nav className="flex flex-wrap gap-1">
             {NAV.map((item) => (
               <Link
                 key={item.href}
                 href={item.href}
                 className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
-                  pathname === item.href
+                  isActive(pathname, item.href)
                     ? 'bg-raised text-ink'
                     : 'text-muted hover:bg-surface hover:text-ink'
                 }`}
@@ -82,7 +91,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </nav>
 
           <div className="ml-auto flex items-center gap-3 text-sm text-muted">
-            <span>{profile?.full_name || profile?.phone}</span>
+            <span>
+              {profile?.full_name || profile?.phone}
+              <span className="ml-2 rounded bg-raised px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">
+                {profile?.role}
+              </span>
+            </span>
             <Button variant="secondary" onClick={() => void api.auth.signOut()}>
               Sign out
             </Button>

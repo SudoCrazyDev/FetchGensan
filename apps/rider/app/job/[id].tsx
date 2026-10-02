@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Linking, Pressable, ScrollView, View } from 'react-native';
+import { Alert, Image, Linking, Pressable, ScrollView, View } from 'react-native';
 
 import { humanizeError } from '@fetch/api';
 import {
@@ -10,7 +10,10 @@ import {
   useDriverPosition,
   useErrandItems,
   useJob,
+  useJobReceipts,
+  useMyRating,
   useRateJob,
+  useRejectErrandTotal,
 } from '@fetch/api/react';
 import {
   JOB_TYPE_LABELS,
@@ -25,6 +28,7 @@ import {
   Card,
   Divider,
   EmptyState,
+  Field,
   Loading,
   Money,
   Row,
@@ -37,6 +41,7 @@ import {
 } from '@fetch/ui';
 
 import { TrackMap } from '@/components/TrackMap';
+import { DISPATCH_PHONE } from '@/lib/config';
 
 export default function JobScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -48,12 +53,21 @@ export default function JobScreen() {
   const { data: items } = useErrandItems(job?.job_type === 'errand' ? id : null);
   const { data: position } = useDriverPosition(id, !!job && isLive(job.status));
 
+  const needsReceipt = job?.job_type === 'errand' && job.status === 'awaiting_approval';
+  const { data: receipts } = useJobReceipts(needsReceipt ? id : null);
+  const { data: myRating, isLoading: ratingLoading } = useMyRating(
+    job?.status === 'completed' ? id : null,
+  );
+
   const approve = useApproveErrandTotal();
+  const reject = useRejectErrandTotal();
   const cancel = useCancelJob();
   const rate = useRateJob();
 
   const [stars, setStars] = useState(0);
-  const [rated, setRated] = useState(false);
+  const [comment, setComment] = useState('');
+  const [rejecting, setRejecting] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
 
   if (isLoading) return <Loading label="Loading your booking" />;
 
@@ -64,7 +78,7 @@ export default function JobScreen() {
           title="Booking not found"
           body="It may have been removed."
           actionLabel="Back home"
-          onAction={() => router.replace('/')}
+          onAction={() => router.dismissTo('/')}
         />
       </Screen>
     );
@@ -73,6 +87,21 @@ export default function JobScreen() {
   const live = isLive(job.status);
   const needsApproval = job.status === 'awaiting_approval';
   const isErrand = job.job_type === 'errand';
+
+  // A receipt with nothing on it: every item was out of stock. Nobody has
+  // paid for anything, so this is the one approval state the customer may
+  // cancel from (see cancel_job in 20261002000200).
+  const nothingBought = needsApproval && isErrand && job.items_cost_centavos === 0;
+  // Once shopping has started the rider holds goods they paid for; the
+  // server refuses a customer cancel, so do not offer one.
+  //
+  // Note `live` (isLive) deliberately excludes `searching` -- it means "a
+  // rider is on it" -- so the open-booking test is !isTerminal instead.
+  // Using `live` here hid Cancel for exactly the customer most likely to
+  // want it: the one still waiting for a rider.
+  const canCancel =
+    !isTerminal(job.status) &&
+    (!['shopping', 'awaiting_approval'].includes(job.status) || nothingBought);
 
   const availableItems = (items ?? []).filter((i) => i.is_available !== false);
   const unavailableItems = (items ?? []).filter((i) => i.is_available === false);
@@ -140,7 +169,7 @@ export default function JobScreen() {
                 <Txt size="small" tone="muted">
                   Nobody was free nearby. Please try again in a few minutes.
                 </Txt>
-                <Button label="Book again" onPress={() => router.replace('/')} />
+                <Button label="Book again" onPress={() => router.dismissTo('/')} />
               </Stack>
             </Card>
           ) : null}
@@ -155,10 +184,12 @@ export default function JobScreen() {
               <Stack gap={4}>
                 <Stack gap={1}>
                   <Txt size="title" weight="700">
-                    Review your total
+                    {nothingBought ? 'Nothing was available' : 'Review your total'}
                   </Txt>
                   <Txt size="small" tone="muted">
-                    Your rider has bought your items. Approve the total and they will head over.
+                    {nothingBought
+                      ? 'Your rider could not find anything on your list. You can cancel at no cost, or send them back with different instructions.'
+                      : 'Your rider has bought your items. Approve the total and they will head over.'}
                   </Txt>
                 </Stack>
 
@@ -225,21 +256,94 @@ export default function JobScreen() {
                   </Txt>
                 ) : null}
 
-                <Button
-                  label={`Approve ${formatPeso(job.final_total_centavos)}`}
-                  size="lg"
-                  loading={approve.isPending}
-                  onPress={() =>
-                    approve.mutate(job.id, {
-                      onError: (e) => Alert.alert('Could not approve', humanizeError(e)),
-                    })
-                  }
-                />
-                <Button
-                  label="Something is wrong — call dispatch"
-                  variant="ghost"
-                  onPress={() => void Linking.openURL('tel:+639170000004')}
-                />
+                {(receipts ?? []).filter((r) => r.url).length > 0 ? (
+                  <Stack gap={2}>
+                    <Txt size="caption" tone="muted" weight="600">
+                      RECEIPT PHOTO
+                    </Txt>
+                    {(receipts ?? []).slice(0, 1).map((r) =>
+                      r.url ? (
+                        <Pressable key={r.id} onPress={() => void Linking.openURL(r.url!)}>
+                          <Image
+                            source={{ uri: r.url }}
+                            accessibilityLabel="Photo of the store receipt"
+                            style={{
+                              width: '100%',
+                              height: 220,
+                              borderRadius: t.radius.md,
+                              backgroundColor: t.color.background,
+                            }}
+                            resizeMode="contain"
+                          />
+                        </Pressable>
+                      ) : null,
+                    )}
+                  </Stack>
+                ) : null}
+
+                {rejecting ? (
+                  <Stack gap={3}>
+                    <Field
+                      label="What should your rider change?"
+                      value={rejectReason}
+                      onChangeText={setRejectReason}
+                      placeholder="Only one dozen eggs, not two"
+                      multiline
+                      autoFocus
+                    />
+                    <Button
+                      label="Send back to my rider"
+                      loading={reject.isPending}
+                      disabled={rejectReason.trim().length === 0}
+                      onPress={() =>
+                        reject.mutate(
+                          { jobId: job.id, reason: rejectReason.trim() },
+                          {
+                            onSuccess: () => {
+                              setRejecting(false);
+                              setRejectReason('');
+                            },
+                            onError: (e) => Alert.alert('Could not send', humanizeError(e)),
+                          },
+                        )
+                      }
+                    />
+                    <Button label="Never mind" variant="ghost" onPress={() => setRejecting(false)} />
+                  </Stack>
+                ) : (
+                  <>
+                    {nothingBought ? (
+                      <Button
+                        label="Cancel this errand"
+                        size="lg"
+                        variant="danger"
+                        loading={cancel.isPending}
+                        onPress={confirmCancel}
+                      />
+                    ) : (
+                      <Button
+                        label={`Approve ${formatPeso(job.final_total_centavos)}`}
+                        size="lg"
+                        loading={approve.isPending}
+                        onPress={() =>
+                          approve.mutate(job.id, {
+                            onError: (e) => Alert.alert('Could not approve', humanizeError(e)),
+                          })
+                        }
+                      />
+                    )}
+                    <Button
+                      label={nothingBought ? 'Try something else' : 'Not right — ask for changes'}
+                      variant="secondary"
+                      onPress={() => setRejecting(true)}
+                    />
+                    <Button
+                      label="Call dispatch"
+                      variant="ghost"
+                      onPress={() => void Linking.openURL(`tel:${DISPATCH_PHONE}`)}
+                    />
+                  </>
+                )}
               </Stack>
             </Card>
           ) : null}
@@ -377,28 +481,38 @@ export default function JobScreen() {
 
           {/* ------------------------------------------------ rating */}
 
-          {job.status === 'completed' && !rated ? (
+          {job.status === 'completed' && !ratingLoading && !myRating ? (
             <Card>
               <Stack gap={3}>
                 <Txt weight="600">How was your {JOB_TYPE_LABELS[job.job_type].toLowerCase()}?</Txt>
                 <Row gap={2} justify="center">
                   {[1, 2, 3, 4, 5].map((n) => (
-                    <Pressable key={n} onPress={() => setStars(n)} hitSlop={8}>
+                    <Pressable
+                      key={n}
+                      onPress={() => setStars(n)}
+                      hitSlop={8}
+                      accessibilityLabel={`${n} star${n === 1 ? '' : 's'}`}
+                    >
                       <Txt size="heading">{n <= stars ? '★' : '☆'}</Txt>
                     </Pressable>
                   ))}
                 </Row>
+                {stars > 0 ? (
+                  <Field
+                    value={comment}
+                    onChangeText={setComment}
+                    placeholder={stars >= 4 ? 'Anything you liked? (optional)' : 'What went wrong? (optional)'}
+                    multiline
+                  />
+                ) : null}
                 <Button
                   label="Submit rating"
                   disabled={stars === 0}
                   loading={rate.isPending}
                   onPress={() =>
                     rate.mutate(
-                      { jobId: job.id, stars },
-                      {
-                        onSuccess: () => setRated(true),
-                        onError: (e) => Alert.alert('Could not rate', humanizeError(e)),
-                      },
+                      { jobId: job.id, stars, comment: comment.trim() },
+                      { onError: (e) => Alert.alert('Could not rate', humanizeError(e)) },
                     )
                   }
                 />
@@ -406,17 +520,17 @@ export default function JobScreen() {
             </Card>
           ) : null}
 
-          {rated ? (
+          {myRating ? (
             <Card style={{ backgroundColor: t.color.successSoft, borderColor: 'transparent' }}>
               <Txt size="small" align="center">
-                Thanks for the feedback.
+                You rated this {'★'.repeat(myRating.stars)}. Thanks for the feedback.
               </Txt>
             </Card>
           ) : null}
 
           {/* ------------------------------------------------ actions */}
 
-          {live && !needsApproval ? (
+          {canCancel && !nothingBought ? (
             <Button
               label="Cancel booking"
               variant="danger"
@@ -426,7 +540,7 @@ export default function JobScreen() {
           ) : null}
 
           {isTerminal(job.status) ? (
-            <Button label="Back home" variant="secondary" onPress={() => router.replace('/')} />
+            <Button label="Back home" variant="secondary" onPress={() => router.dismissTo('/')} />
           ) : null}
 
           <Spacer size={8} />

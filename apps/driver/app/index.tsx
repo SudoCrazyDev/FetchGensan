@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, Switch, View } from 'react-native';
 
 import { humanizeError } from '@fetch/api';
@@ -7,6 +7,7 @@ import {
   useClaimJob,
   useDeclineJob,
   useDriverActiveJob,
+  useDriverDocuments,
   useDriverMe,
   useOffers,
   useSetOnline,
@@ -39,6 +40,7 @@ import {
   stopOfferAlert,
   successFeedback,
 } from '@/lib/alerts';
+import { REQUIRED_DOCUMENTS } from '@/lib/documents';
 import { usePushRegistration } from '@/lib/usePushRegistration';
 import { useLocationPing } from '@/lib/useLocationPing';
 
@@ -53,6 +55,7 @@ export default function DriverHome() {
   const { data: driver, isLoading } = useDriverMe();
   const { data: activeJob } = useDriverActiveJob();
   const { data: offers } = useOffers();
+  const { data: documents } = useDriverDocuments();
   const setOnline = useSetOnline();
   const claim = useClaimJob();
   const decline = useDeclineJob();
@@ -92,6 +95,16 @@ export default function DriverHome() {
   // Never leave the phone buzzing because a screen unmounted.
   useEffect(() => stopOfferAlert, []);
 
+  // Re-render every second while an offer is up, so the countdown actually
+  // counts down instead of jumping every five seconds with the poll.
+  const [, setTick] = useState(0);
+  const hasOffers = (offers ?? []).length > 0;
+  useEffect(() => {
+    if (!hasOffers) return;
+    const id = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [hasOffers]);
+
   if (isLoading) return <Loading />;
 
   const walletOwed = driver ? Math.min(0, driver.wallet_balance_centavos) : 0;
@@ -108,10 +121,21 @@ export default function DriverHome() {
     });
   }
 
+  const docs = documents ?? [];
+  const missingDocs = REQUIRED_DOCUMENTS.filter((type) => !docs.some((d) => d.doc_type === type));
+  const rejectedDocs = docs.filter((d) => d.status === 'rejected');
+
   return (
     <Screen edges={['top']}>
       <ScrollView showsVerticalScrollIndicator={false}>
         <Stack gap={4}>
+          <Row justify="space-between">
+            <Txt size="title" weight="700">
+              FetchGensan <Txt tone="primary" weight="700">Rider</Txt>
+            </Txt>
+            <Button label="Account" variant="ghost" onPress={() => router.push('/profile')} />
+          </Row>
+
           {/* ------------------------------------------------ online toggle */}
 
           <Card
@@ -194,17 +218,53 @@ export default function DriverHome() {
 
           {driver?.status !== 'approved' ? (
             <Card style={{ backgroundColor: t.color.infoSoft, borderColor: 'transparent' }}>
-              <Stack gap={1}>
+              <Stack gap={2}>
                 <Txt weight="700">
                   {driver?.status === 'pending'
-                    ? 'Waiting for approval'
+                    ? missingDocs.length > 0
+                      ? 'Finish your documents'
+                      : 'Waiting for approval'
                     : `Account ${driver?.status}`}
                 </Txt>
                 <Txt size="small">
-                  {driver?.status === 'pending'
-                    ? 'Dispatch is reviewing your documents. You can go online once approved.'
-                    : 'Contact dispatch to sort this out.'}
+                  {driver?.status !== 'pending'
+                    ? 'Contact dispatch to sort this out.'
+                    : missingDocs.length > 0
+                      ? `${missingDocs.length} required document${missingDocs.length === 1 ? '' : 's'} still to upload. Dispatch can only approve you once they have them all.`
+                      : 'Dispatch is reviewing your documents. You can go online once approved.'}
                 </Txt>
+                {driver?.status === 'pending' ? (
+                  <Button
+                    label={missingDocs.length > 0 ? 'Upload documents' : 'View documents'}
+                    variant={missingDocs.length > 0 ? 'primary' : 'secondary'}
+                    onPress={() =>
+                      router.push({ pathname: '/onboarding', params: { step: 'documents' } })
+                    }
+                  />
+                ) : null}
+              </Stack>
+            </Card>
+          ) : null}
+
+          {rejectedDocs.length > 0 ? (
+            <Card style={{ backgroundColor: t.color.dangerSoft, borderColor: 'transparent' }}>
+              <Stack gap={2}>
+                <Txt weight="700">
+                  {rejectedDocs.length === 1
+                    ? 'A document needs a new photo'
+                    : `${rejectedDocs.length} documents need new photos`}
+                </Txt>
+                {rejectedDocs.map((d) => (
+                  <Txt key={d.id} size="small">
+                    {d.reject_reason || 'Rejected by dispatch'}
+                  </Txt>
+                ))}
+                <Button
+                  label="Fix documents"
+                  onPress={() =>
+                    router.push({ pathname: '/onboarding', params: { step: 'documents' } })
+                  }
+                />
               </Stack>
             </Card>
           ) : null}
@@ -341,7 +401,10 @@ export default function DriverHome() {
                         <Button
                           label="Accept"
                           size="lg"
-                          loading={claim.isPending}
+                          // Only the card being accepted spins; the rest
+                          // are just disabled until the answer comes back.
+                          loading={claim.isPending && claim.variables === job.id}
+                          disabled={claim.isPending || remaining === 0}
                           onPress={() => {
                             stopOfferAlert();
                             claim.mutate(job.id, {

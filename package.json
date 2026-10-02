@@ -20,6 +20,7 @@
     "db:push": "supabase db push",
     "seed:users": "pnpm --filter @fetch/api seed:users",
     "test:db": "bash supabase/tests/run.sh",
+    "test:e2e": "pnpm --filter @fetch/api test:e2e",
     "test:all": "pnpm typecheck && pnpm test && pnpm test:db"
   },
   "devDependencies": {

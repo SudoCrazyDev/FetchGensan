@@ -112,6 +112,8 @@ export const profileUpdateSchema = z.object({
 });
 
 export const driverProfileSchema = z.object({
+  // Shown to the customer on the "your rider" card the moment they accept.
+  full_name: z.string().trim().min(2, 'Enter your full name').max(120),
   vehicle_make: z.string().trim().min(1, 'Motorcycle make').max(60),
   vehicle_model: z.string().trim().min(1, 'Motorcycle model').max(60),
   vehicle_color: z.string().trim().max(40).default(''),

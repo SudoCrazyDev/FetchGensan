@@ -144,6 +144,7 @@ export interface ErrandReceipt {
   job_id: string;
   storage_path: string;
   total_centavos: number;
+  uploaded_by: string | null;
   created_at: string;
 }
 
@@ -187,6 +188,9 @@ export interface SavedPlace {
   landmark_note: string;
   address_line: string;
   use_count: number;
+  /** Generated from `location`; see 20261002000200_app_flow_fixes.sql. */
+  lng: number;
+  lat: number;
 }
 
 export interface JobEvent {
@@ -320,4 +324,97 @@ export interface FareQuoteRow {
 export interface JobWithDetails extends Job {
   driver?: PublicDriverInfo | null;
   items?: ErrandItem[];
+}
+
+/** A row of the `admin_jobs` view: every job, any status, with names. */
+export interface AdminJobRow {
+  id: string;
+  reference: string;
+  job_type: JobType;
+  status: JobStatus;
+  created_at: string;
+  assigned_at: string | null;
+  completed_at: string | null;
+  cancelled_at: string | null;
+  cancel_reason: string | null;
+  cancelled_by: string | null;
+  scheduled_for: string | null;
+  notes: string;
+  pickup_label: string;
+  pickup_landmark: string;
+  pickup_lng: number;
+  pickup_lat: number;
+  dropoff_label: string;
+  dropoff_landmark: string;
+  dropoff_lng: number;
+  dropoff_lat: number;
+  recipient_name: string;
+  recipient_phone: string;
+  distance_meters: number;
+  quoted_fare_centavos: number;
+  items_cost_centavos: number;
+  items_budget_centavos: number;
+  final_total_centavos: number;
+  commission_centavos: number;
+  payment_method: PaymentMethod;
+  payment_status: PaymentStatus;
+  dispatch_attempts: number;
+  customer_id: string;
+  customer_name: string;
+  customer_phone: string;
+  driver_id: string | null;
+  driver_name: string | null;
+  driver_phone: string | null;
+  plate_number: string | null;
+}
+
+/** A row of the `admin_customers` view. */
+export interface AdminCustomerRow {
+  id: string;
+  phone: string;
+  full_name: string;
+  role: UserRole;
+  is_blocked: boolean;
+  notes: string | null;
+  created_at: string;
+  completed_jobs: number;
+  cancelled_jobs: number;
+  last_booking_at: string | null;
+}
+
+/** A row of the `admin_landmarks` view. */
+export interface AdminLandmarkRow {
+  id: string;
+  name: string;
+  category: string;
+  use_count: number;
+  is_active: boolean;
+  created_at: string;
+  lng: number;
+  lat: number;
+}
+
+/** One day from `admin_daily_stats()`, in Manila time. */
+export interface DailyStatsRow {
+  day: string;
+  completed: number;
+  cancelled: number;
+  expired: number;
+  gross_centavos: number;
+  items_centavos: number;
+  commission_centavos: number;
+}
+
+export interface FareUpdateInput {
+  base_fare_centavos: number;
+  included_meters: number;
+  per_km_centavos: number;
+  per_minute_centavos: number;
+  min_fare_centavos: number;
+  service_fee_centavos: number;
+  night_surcharge_centavos: number;
+  night_starts_hour: number;
+  night_ends_hour: number;
+  commission_bps: number;
+  max_item_float_centavos: number;
 }

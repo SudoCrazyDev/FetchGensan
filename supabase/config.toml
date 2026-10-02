@@ -60,6 +60,10 @@ template = "FetchGensan code: {{ .Code }}. Do not share this with anyone."
 "639170000002" = "123456"
 "639170000003" = "123456"
 "639170000004" = "123456"
+"639170000005" = "123456"
+# Unseeded: use these to walk a brand-new customer / rider signup.
+"639170000006" = "123456"
+"639170000007" = "123456"
 
 # LOCAL ONLY -- these credentials are deliberately fake.
 #

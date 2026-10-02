@@ -38,7 +38,7 @@ export default function History() {
           title="No bookings yet"
           body="Your rides, errands and deliveries will show up here."
           actionLabel="Book something"
-          onAction={() => router.replace('/')}
+          onAction={() => router.dismissTo('/')}
         />
       </Screen>
     );

@@ -7,7 +7,7 @@ import {
   type JobType,
   customerStatusLabel,
   formatPeso,
-  isLive,
+  isTerminal,
 } from '@fetch/core';
 import {
   Badge,
@@ -52,7 +52,9 @@ function ActiveJobCard() {
   const router = useRouter();
   const t = useTheme();
 
-  if (!job || !isLive(job.status)) return null;
+  // !isTerminal, not isLive: isLive excludes `searching`, and a customer
+  // still waiting for a rider most needs to see their booking here.
+  if (!job || isTerminal(job.status)) return null;
 
   const needsYou = job.status === 'awaiting_approval';
 
@@ -102,7 +104,7 @@ export default function Home() {
   const { data: profile } = useProfile();
   const { data: activeJob } = useActiveJob();
 
-  const hasActive = !!activeJob && isLive(activeJob.status);
+  const hasActive = !!activeJob && !isTerminal(activeJob.status);
   const firstName = profile?.full_name?.split(' ')[0];
 
   return (

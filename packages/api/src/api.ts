@@ -13,13 +13,20 @@ import { toPoint } from '@fetch/core';
 
 import type { FetchClient } from './client';
 import type {
+  AdminCustomerRow,
+  AdminJobRow,
+  AdminLandmarkRow,
+  DailyStatsRow,
   DispatchBoardRow,
   Driver,
   DriverDocument,
   DriverPosition,
   DriverRosterRow,
+  DriverStatus,
   ErrandItem,
+  ErrandReceipt,
   FareConfigRow,
+  FareUpdateInput,
   FareQuoteRow,
   Job,
   JobEvent,
@@ -29,6 +36,7 @@ import type {
   Profile,
   PublicDriverInfo,
   SavedPlace,
+  UserRole,
   WalletTransaction,
 } from './types';
 
@@ -65,6 +73,13 @@ function freshChannel(client: FetchClient, name: string) {
     }
   }
   return client.channel(name);
+}
+
+async function currentUserId(client: FetchClient): Promise<string> {
+  const { data } = await client.auth.getSession();
+  const userId = data.session?.user.id;
+  if (!userId) throw new Error('Not signed in');
+  return userId;
 }
 
 function unwrap<T>(result: { data: T | null; error: unknown }): T {
@@ -159,6 +174,42 @@ export function createApi(client: FetchClient) {
       return unwrap(
         await client.from('profiles').update(patch).eq('id', userId).select('*').single(),
       ) as Profile;
+    },
+  };
+
+  // ------------------------------------------------------------- files
+
+  const files = {
+    /**
+     * Uploads a local file (a camera or gallery URI) to a storage bucket.
+     *
+     * Reads the file as an ArrayBuffer, not a Blob. On React Native,
+     * storage-js uploads a fetched Blob as a zero-byte object -- the upload
+     * "succeeds" and dispatch is left reviewing an empty licence photo. The
+     * ArrayBuffer route is the one Supabase's own Expo guide uses, and it
+     * works unchanged on web.
+     */
+    async uploadFromUri(
+      bucket: 'driver-docs' | 'receipts' | 'avatars',
+      path: string,
+      uri: string,
+      contentType = 'image/jpeg',
+    ): Promise<string> {
+      const body = await fetch(uri).then((r) => r.arrayBuffer());
+      if (body.byteLength === 0) throw new Error('That photo came through empty. Try again.');
+
+      const { error } = await client.storage
+        .from(bucket)
+        .upload(path, body, { contentType, upsert: true });
+      if (error) throw error;
+      return path;
+    },
+
+    /** A short-lived link to a private file. Storage policies decide who may. */
+    async signedUrl(bucket: 'driver-docs' | 'receipts', path: string, seconds = 600) {
+      const { data, error } = await client.storage.from(bucket).createSignedUrl(path, seconds);
+      if (error) throw error;
+      return data.signedUrl;
     },
   };
 
@@ -353,6 +404,39 @@ export function createApi(client: FetchClient) {
       return data as Job;
     },
 
+    /** Sends the receipt back to the driver: "not that brand", "too much". */
+    async rejectErrandTotal(jobId: string, reason = ''): Promise<Job> {
+      const { data, error } = await client.rpc('reject_errand_total', {
+        p_job_id: jobId,
+        p_reason: reason,
+      });
+      if (error) throw error;
+      return data as Job;
+    },
+
+    async receipts(jobId: string): Promise<ErrandReceipt[]> {
+      const { data, error } = await client
+        .from('errand_receipts')
+        .select('*')
+        .eq('job_id', jobId)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as ErrandReceipt[];
+    },
+
+    /** The rating the caller already left on this job, if any. */
+    async myRating(jobId: string): Promise<{ stars: number; comment: string } | null> {
+      const userId = await currentUserId(client);
+      const { data, error } = await client
+        .from('ratings')
+        .select('stars, comment')
+        .eq('job_id', jobId)
+        .eq('rater_id', userId)
+        .maybeSingle();
+      if (error) throw error;
+      return data as { stars: number; comment: string } | null;
+    },
+
     async cancel(jobId: string, reason = ''): Promise<Job> {
       const { data, error } = await client.rpc('cancel_job', {
         p_job_id: jobId,
@@ -385,8 +469,11 @@ export function createApi(client: FetchClient) {
      * Realtime subscription to one job. RLS applies to realtime too, so
      * this only ever delivers rows the caller could have selected.
      */
-    onJobChange(jobId: string, cb: (job: Job) => void) {
-      const channel = freshChannel(client, `job:${jobId}`)
+    onJobChange(jobId: string, cb: (job: Job) => void, tag = 'detail') {
+      // `tag` keeps two screens watching the same job from evicting each
+      // other's channel: freshChannel() removes any channel with the same
+      // name, so the driver's home and job screens must not share one.
+      const channel = freshChannel(client, `job:${jobId}:${tag}`)
         .on(
           'postgres_changes',
           { event: 'UPDATE', schema: 'public', table: 'jobs', filter: `id=eq.${jobId}` },
@@ -439,25 +526,28 @@ export function createApi(client: FetchClient) {
       return data as Driver | null;
     },
 
-    /** Creates the driver row on first launch of the driver app. */
+    /**
+     * Creates the driver row on first launch, or edits the vehicle details
+     * later. Also sets the rider's name, which is what a customer sees.
+     */
     async register(input: {
+      full_name: string;
       vehicle_make: string;
       vehicle_model: string;
       vehicle_color: string;
       plate_number: string;
       license_number: string;
     }): Promise<Driver> {
-      const { data: session } = await client.auth.getSession();
-      const userId = session.session?.user.id;
-      if (!userId) throw new Error('Not signed in');
-
-      return unwrap(
-        await client
-          .from('drivers')
-          .upsert({ id: userId, ...input }, { onConflict: 'id' })
-          .select('*')
-          .single(),
-      ) as Driver;
+      const { data, error } = await client.rpc('register_driver', {
+        p_full_name: input.full_name,
+        p_vehicle_make: input.vehicle_make,
+        p_vehicle_model: input.vehicle_model,
+        p_vehicle_color: input.vehicle_color,
+        p_plate_number: input.plate_number,
+        p_license_number: input.license_number,
+      });
+      if (error) throw error;
+      return data as Driver;
     },
 
     async setOnline(online: boolean): Promise<Driver> {
@@ -507,9 +597,14 @@ export function createApi(client: FetchClient) {
     },
 
     async activeJob(): Promise<Job | null> {
+      // Filter on driver_id explicitly. RLS also lets a driver read any
+      // `searching` job they hold an offer on, so a status filter alone
+      // returned someone else's unclaimed booking as "your current job".
+      const userId = await currentUserId(client);
       const { data, error } = await client
         .from('jobs')
         .select('*')
+        .eq('driver_id', userId)
         .in('status', LIVE_STATUSES)
         .order('assigned_at', { ascending: false })
         .limit(1)
@@ -563,9 +658,11 @@ export function createApi(client: FetchClient) {
     },
 
     async earnings(since: Date): Promise<{ jobs: number; grossCentavos: number; commissionCentavos: number }> {
+      const userId = await currentUserId(client);
       const { data, error } = await client
         .from('jobs')
         .select('final_total_centavos, commission_centavos, items_cost_centavos')
+        .eq('driver_id', userId)
         .eq('status', 'completed')
         .gte('completed_at', since.toISOString());
       if (error) throw error;
@@ -585,6 +682,34 @@ export function createApi(client: FetchClient) {
         }),
         { jobs: 0, grossCentavos: 0, commissionCentavos: 0 },
       );
+    },
+
+    /** Name and number of the customer on the driver's live job. */
+    async customerContact(jobId: string): Promise<{ full_name: string; phone: string } | null> {
+      const { data, error } = await client.rpc('job_customer_contact', { p_job_id: jobId });
+      if (error) throw error;
+      const rows = (data ?? []) as { full_name: string; phone: string }[];
+      return rows[0] ?? null;
+    },
+
+    /**
+     * Any change to a job assigned to this driver -- including one a
+     * dispatcher assigned by hand, which never passes through an offer.
+     */
+    onAssignedJobChange(driverId: string, cb: (job: Job) => void, tag = 'main') {
+      const channel = freshChannel(client, `jobs:driver:${driverId}:${tag}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'jobs', filter: `driver_id=eq.${driverId}` },
+          (payload) => {
+            if (payload.new && Object.keys(payload.new).length > 0) cb(payload.new as Job);
+          },
+        )
+        .subscribe();
+
+      return () => {
+        void client.removeChannel(channel);
+      };
     },
 
     async documents(): Promise<DriverDocument[]> {
@@ -690,17 +815,58 @@ export function createApi(client: FetchClient) {
 
     /** Manual assignment. The dispatcher's escape hatch when auto-dispatch
      * has failed and they are on the phone to a driver they trust. */
-    async assign(jobId: string, driverId: string): Promise<void> {
-      const { error } = await client
-        .from('jobs')
-        .update({ driver_id: driverId, status: 'assigned' })
-        .eq('id', jobId);
+    async assign(jobId: string, driverId: string): Promise<Job> {
+      const { data, error } = await client.rpc('admin_assign_job', {
+        p_job_id: jobId,
+        p_driver_id: driverId,
+      });
+      if (error) throw error;
+      return data as Job;
+    },
+
+    async setDriverStatus(driverId: string, status: DriverStatus, reason = ''): Promise<void> {
+      const { error } = await client.rpc('admin_set_driver_status', {
+        p_driver_id: driverId,
+        p_status: status,
+        p_reason: reason,
+      });
       if (error) throw error;
     },
 
-    async setDriverStatus(driverId: string, status: string): Promise<void> {
-      const { error } = await client.from('drivers').update({ status }).eq('id', driverId);
+    async driverDetail(driverId: string): Promise<Driver | null> {
+      const { data, error } = await client
+        .from('drivers')
+        .select('*')
+        .eq('id', driverId)
+        .maybeSingle();
       if (error) throw error;
+      return data as Driver | null;
+    },
+
+    async driverDocuments(driverId: string): Promise<DriverDocument[]> {
+      const { data, error } = await client
+        .from('driver_documents')
+        .select('*')
+        .eq('driver_id', driverId)
+        .order('doc_type');
+      if (error) throw error;
+      return (data ?? []) as DriverDocument[];
+    },
+
+    /** A short-lived link to a private file, for staff review. */
+    signedUrl(bucket: 'driver-docs' | 'receipts', path: string): Promise<string> {
+      return files.signedUrl(bucket, path);
+    },
+
+    async driverWallet(driverId: string, limit = 100): Promise<WalletTransaction[]> {
+      const { data, error } = await client
+        .from('wallet_transactions')
+        .select('*')
+        .eq('driver_id', driverId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      return (data ?? []) as WalletTransaction[];
     },
 
     async reviewDocument(
@@ -708,16 +874,28 @@ export function createApi(client: FetchClient) {
       status: 'approved' | 'rejected',
       rejectReason = '',
     ): Promise<void> {
-      const { data: session } = await client.auth.getSession();
-      const { error } = await client
-        .from('driver_documents')
-        .update({
-          status,
-          reject_reason: rejectReason,
-          reviewed_by: session.session?.user.id ?? null,
-          reviewed_at: new Date().toISOString(),
-        })
-        .eq('id', docId);
+      const { error } = await client.rpc('admin_review_document', {
+        p_doc_id: docId,
+        p_status: status,
+        p_reason: rejectReason,
+      });
+      if (error) throw error;
+    },
+
+    async setCreditFloor(driverId: string, floorCentavos: number): Promise<void> {
+      const { error } = await client.rpc('admin_set_credit_floor', {
+        p_driver_id: driverId,
+        p_floor_centavos: floorCentavos,
+      });
+      if (error) throw error;
+    },
+
+    async walletAdjustment(driverId: string, amountCentavos: number, note: string): Promise<void> {
+      const { error } = await client.rpc('admin_wallet_adjustment', {
+        p_driver_id: driverId,
+        p_amount: amountCentavos,
+        p_note: note,
+      });
       if (error) throw error;
     },
 
@@ -735,6 +913,180 @@ export function createApi(client: FetchClient) {
       if (error) throw error;
     },
 
+    /** Every job, any status. `search` matches reference, names, phones and plate. */
+    async jobs(
+      opts: {
+        search?: string;
+        status?: JobStatus | 'all';
+        jobType?: JobType | 'all';
+        limit?: number;
+        before?: string;
+        driverId?: string;
+        customerId?: string;
+      } = {},
+    ): Promise<AdminJobRow[]> {
+      let query = client
+        .from('admin_jobs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(opts.limit ?? 50);
+
+      if (opts.status && opts.status !== 'all') query = query.eq('status', opts.status);
+      if (opts.jobType && opts.jobType !== 'all') query = query.eq('job_type', opts.jobType);
+      if (opts.before) query = query.lt('created_at', opts.before);
+      if (opts.driverId) query = query.eq('driver_id', opts.driverId);
+      if (opts.customerId) query = query.eq('customer_id', opts.customerId);
+
+      // PostgREST's `or` syntax treats commas and parentheses as structure,
+      // so strip them from free text rather than let a search break the query.
+      const term = opts.search?.replace(/[,()*%]/g, ' ').trim();
+      if (term) {
+        const like = `%${term}%`;
+        query = query.or(
+          [
+            `reference.ilike.${like}`,
+            `customer_name.ilike.${like}`,
+            `customer_phone.ilike.${like}`,
+            `driver_name.ilike.${like}`,
+            `plate_number.ilike.${like}`,
+          ].join(','),
+        );
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return (data ?? []) as AdminJobRow[];
+    },
+
+    async jobEvents(jobId: string): Promise<JobEvent[]> {
+      const { data, error } = await client
+        .from('job_events')
+        .select('*')
+        .eq('job_id', jobId)
+        .order('created_at');
+      if (error) throw error;
+      return (data ?? []) as JobEvent[];
+    },
+
+    async jobItems(jobId: string): Promise<ErrandItem[]> {
+      const { data, error } = await client
+        .from('errand_items')
+        .select('*')
+        .eq('job_id', jobId)
+        .order('position');
+      if (error) throw error;
+      return (data ?? []) as ErrandItem[];
+    },
+
+    async jobReceipts(jobId: string): Promise<ErrandReceipt[]> {
+      const { data, error } = await client
+        .from('errand_receipts')
+        .select('*')
+        .eq('job_id', jobId)
+        .order('created_at');
+      if (error) throw error;
+      return (data ?? []) as ErrandReceipt[];
+    },
+
+    async customers(search = '', limit = 100): Promise<AdminCustomerRow[]> {
+      let query = client
+        .from('admin_customers')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      const term = search.replace(/[,()*%]/g, ' ').trim();
+      if (term) {
+        const like = `%${term}%`;
+        query = query.or(`full_name.ilike.${like},phone.ilike.${like}`);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return (data ?? []) as AdminCustomerRow[];
+    },
+
+    async setBlocked(profileId: string, blocked: boolean, note = ''): Promise<void> {
+      const { error } = await client.rpc('admin_set_blocked', {
+        p_profile_id: profileId,
+        p_blocked: blocked,
+        p_note: note,
+      });
+      if (error) throw error;
+    },
+
+    async setRole(profileId: string, role: UserRole): Promise<void> {
+      const { error } = await client.rpc('admin_set_role', {
+        p_profile_id: profileId,
+        p_role: role,
+      });
+      if (error) throw error;
+    },
+
+    /** Every fare row including retired ones, newest first. */
+    async fareHistory(): Promise<(FareConfigRow & { effective_from: string })[]> {
+      const { data, error } = await client
+        .from('fare_config')
+        .select('*')
+        .order('effective_from', { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as (FareConfigRow & { effective_from: string })[];
+    },
+
+    async updateFare(jobType: JobType, input: FareUpdateInput): Promise<FareConfigRow> {
+      const { data, error } = await client.rpc('admin_update_fare', {
+        p_job_type: jobType,
+        p_base_fare_centavos: input.base_fare_centavos,
+        p_included_meters: input.included_meters,
+        p_per_km_centavos: input.per_km_centavos,
+        p_per_minute_centavos: input.per_minute_centavos,
+        p_min_fare_centavos: input.min_fare_centavos,
+        p_service_fee_centavos: input.service_fee_centavos,
+        p_night_surcharge_centavos: input.night_surcharge_centavos,
+        p_night_starts_hour: input.night_starts_hour,
+        p_night_ends_hour: input.night_ends_hour,
+        p_commission_bps: input.commission_bps,
+        p_max_item_float_centavos: input.max_item_float_centavos,
+      });
+      if (error) throw error;
+      return data as FareConfigRow;
+    },
+
+    async landmarks(): Promise<AdminLandmarkRow[]> {
+      const { data, error } = await client
+        .from('admin_landmarks')
+        .select('*')
+        .order('use_count', { ascending: false })
+        .order('name');
+      if (error) throw error;
+      return (data ?? []) as AdminLandmarkRow[];
+    },
+
+    async saveLandmark(input: {
+      id?: string | null;
+      name: string;
+      category: string;
+      location: LatLng;
+      isActive?: boolean;
+    }): Promise<string> {
+      const { data, error } = await client.rpc('admin_upsert_landmark', {
+        p_id: input.id ?? null,
+        p_name: input.name,
+        p_category: input.category,
+        p_lng: input.location.longitude,
+        p_lat: input.location.latitude,
+        p_is_active: input.isActive ?? true,
+      });
+      if (error) throw error;
+      return data as string;
+    },
+
+    async dailyStats(days = 14): Promise<DailyStatsRow[]> {
+      const { data, error } = await client.rpc('admin_daily_stats', { p_days: days });
+      if (error) throw error;
+      return (data ?? []) as DailyStatsRow[];
+    },
+
     /** Any job change at all -- what keeps the live board live. */
     onAnyJobChange(cb: () => void) {
       const channel = freshChannel(client, 'dispatch:jobs')
@@ -747,7 +1099,7 @@ export function createApi(client: FetchClient) {
     },
   };
 
-  return { client, auth, profile, pricing, places, jobs, driver, dispatch };
+  return { client, auth, profile, files, pricing, places, jobs, driver, dispatch };
 }
 
 export type Api = ReturnType<typeof createApi>;

@@ -36,7 +36,15 @@ begin
          'release_scheduled_jobs',
          'reap_stale_drivers',
          'prune_driver_locations',
-         'prune_push_tokens'
+         'prune_push_tokens',
+         -- push fan-out: fires HTTP requests with a secret from Vault
+         'send_push',
+         'push_on_offer',
+         'push_on_job_status',
+         'push_on_manual_assign',
+         -- internal guards for the admin RPCs
+         'require_staff',
+         'require_admin'
        )
        and (
          has_function_privilege('anon', p.oid, 'execute')
@@ -120,7 +128,21 @@ begin
       'job_is_mine', 'job_participant', 'has_live_offer',
       'job_items_editable', 'is_active_job_counterparty',
       'job_receipt_uploadable', 'register_push_token',
-      'unregister_push_token', 'generate_job_reference', 'bump_landmark'
+      'unregister_push_token', 'generate_job_reference', 'bump_landmark',
+      -- called inside public_driver_info / driver_roster, which run their
+      -- functions as the caller
+      'driver_rating', 'can_accept_jobs', 'location_staleness_limit',
+      -- called by search_landmarks(), which runs as the caller
+      'point_of',
+      -- called by quote_fare(), which runs as the caller
+      'active_fare_config', 'is_night_hours',
+      -- 20261002000200: driver signup, errand review, contact
+      'register_driver', 'reject_errand_total', 'job_customer_contact',
+      -- 20261002000100: the console. Each checks is_staff()/admin inside.
+      'admin_set_driver_status', 'admin_review_document', 'admin_set_credit_floor',
+      'admin_wallet_adjustment', 'admin_assign_job', 'admin_set_blocked',
+      'admin_set_role', 'admin_update_fare', 'admin_upsert_landmark',
+      'admin_daily_stats'
     ]) as fn
     where not exists (
       select 1 from pg_proc p

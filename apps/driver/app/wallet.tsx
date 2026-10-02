@@ -12,8 +12,8 @@
 
 import { Linking, ScrollView, View } from 'react-native';
 
-import { useDriverMe, useEarnings, useWallet } from '@fetch/api/react';
-import { formatBps, formatPeso } from '@fetch/core';
+import { useDriverMe, useEarnings, useFareConfigs, useWallet } from '@fetch/api/react';
+import { JOB_TYPE_LABELS, formatBps, formatPeso } from '@fetch/core';
 import {
   Badge,
   Card,
@@ -28,6 +28,8 @@ import {
   useTheme,
   Button,
 } from '@fetch/ui';
+
+import { DISPATCH_PHONE } from '@/lib/config';
 
 const TIME = new Intl.DateTimeFormat('en-PH', {
   timeZone: 'Asia/Manila',
@@ -65,6 +67,7 @@ export default function WalletScreen() {
   const { data: today } = useEarnings(startOfTodayManila(), 'today');
   const { data: week } = useEarnings(startOfWeek(), 'week');
   const { data: transactions } = useWallet();
+  const { data: fares } = useFareConfigs();
 
   if (isLoading || !driver) return <Loading />;
 
@@ -129,12 +132,12 @@ export default function WalletScreen() {
                 <Txt weight="600">How to top up</Txt>
                 <Txt size="small" tone="muted">
                   Drop by the dispatch office and hand over cash, and it is credited to your
-                  wallet straight away. GCash top-ups are coming soon.
+                  wallet straight away.
                 </Txt>
                 <Button
                   label="Call dispatch"
                   variant="secondary"
-                  onPress={() => void Linking.openURL('tel:+639170000004')}
+                  onPress={() => void Linking.openURL(`tel:${DISPATCH_PHONE}`)}
                 />
               </Stack>
             </Card>
@@ -240,9 +243,22 @@ export default function WalletScreen() {
             </Stack>
           </Card>
 
-          <Row justify="center">
-            <Badge label={`Commission ${formatBps(2000)} max`} tone="neutral" />
-          </Row>
+          {fares && fares.length > 0 ? (
+            <Stack gap={1} style={{ alignItems: 'center' }}>
+              <Row gap={2} justify="center">
+                {fares.map((f) => (
+                  <Badge
+                    key={f.id}
+                    label={`${JOB_TYPE_LABELS[f.job_type]} ${formatBps(f.commission_bps)}`}
+                    tone="neutral"
+                  />
+                ))}
+              </Row>
+              <Txt size="caption" tone="muted" align="center">
+                Commission is on the fare only, never on errand goods.
+              </Txt>
+            </Stack>
+          ) : null}
 
           <Spacer size={6} />
         </Stack>

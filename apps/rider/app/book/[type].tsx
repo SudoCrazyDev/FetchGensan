@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, View } from 'react-native';
 
 import { humanizeError } from '@fetch/api';
-import { useCreateJob, useFareConfigs } from '@fetch/api/react';
+import { useCreateJob, useFareConfigs, useFareQuote } from '@fetch/api/react';
 import {
   JOB_TYPE_LABELS,
   type JobType,
@@ -97,6 +97,19 @@ export default function BookScreen() {
 
     return { meters, seconds, fare };
   }, [pickup, dropoff, fareConfigs, jobType]);
+
+  /**
+   * The server's own quote for the same distance. create_job() recomputes
+   * with exactly this function, so once this arrives the number on the Book
+   * button is the number that will be charged -- the local estimate above
+   * only covers the moment before it does.
+   */
+  const { data: serverQuote } = useFareQuote(
+    jobType,
+    estimate?.meters ?? null,
+    estimate?.seconds ?? 0,
+  );
+  const fareTotal = serverQuote?.total_centavos ?? estimate?.fare.totalCentavos ?? null;
 
   const filledItems = items.filter((i) => i.name.trim().length > 0);
 
@@ -355,8 +368,8 @@ export default function BookScreen() {
             <Card>
               <Stack gap={3}>
                 <Row justify="space-between">
-                  <Txt weight="600">Estimated fare</Txt>
-                  <Money centavos={estimate.fare.totalCentavos} size="title" />
+                  <Txt weight="600">{serverQuote ? 'Fare' : 'Estimated fare'}</Txt>
+                  <Money centavos={fareTotal ?? estimate.fare.totalCentavos} size="title" />
                 </Row>
 
                 <Row justify="space-between">
@@ -417,7 +430,9 @@ export default function BookScreen() {
                 ) : null}
 
                 <Txt size="caption" tone="muted">
-                  Final fare is confirmed by our server when you book. Pay your rider in cash.
+                  {serverQuote
+                    ? 'Confirmed price. Pay your rider in cash.'
+                    : 'Checking the price… Pay your rider in cash.'}
                 </Txt>
               </Stack>
             </Card>
@@ -440,7 +455,7 @@ export default function BookScreen() {
           ) : null}
 
           <Button
-            label={estimate ? `Book for ${formatPeso(estimate.fare.totalCentavos)}` : 'Book now'}
+            label={fareTotal !== null ? `Book for ${formatPeso(fareTotal)}` : 'Book now'}
             size="lg"
             loading={submitting}
             disabled={problems.length > 0}
@@ -452,6 +467,10 @@ export default function BookScreen() {
       </ScrollView>
 
       <PlacePicker
+        // Remount per field: the picker keeps its own pin and text, and
+        // without this the drop-off opened pre-filled with the pick-up,
+        // one tap from booking a ride to where you already are.
+        key={picking ?? 'closed'}
         visible={picking !== null}
         title={
           picking === 'pickup'
@@ -464,6 +483,7 @@ export default function BookScreen() {
         }
         near={picking === 'dropoff' ? (pickup?.location ?? startingPoint) : startingPoint}
         initial={picking === 'pickup' ? pickup : dropoff}
+        startAtNear={picking === 'pickup' && isRealFix}
         onCancel={() => setPicking(null)}
         onPick={(place) => {
           if (picking === 'pickup') setPickup(place);

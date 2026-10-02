@@ -48,6 +48,16 @@ export function configureNotifications(): void {
       bypassDnd: false,
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
     });
+
+    // Everything that is not an offer: a job dispatch assigned by hand, a
+    // booking cancelled under you. The push-notify function sends those on
+    // `default`, and Android silently drops a notification aimed at a
+    // channel that does not exist.
+    void Notifications.setNotificationChannelAsync('default', {
+      name: 'Booking updates',
+      importance: Notifications.AndroidImportance.HIGH,
+      sound: 'default',
+    });
   }
 }
 

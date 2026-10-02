@@ -8,12 +8,12 @@
  * staring at the screen wondering where their ride is.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useId } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import type { JobStatus, JobType } from '@fetch/core';
 
-import type { CreateJobInput } from '../api';
+import { LIVE_STATUSES, type CreateJobInput } from '../api';
 import { useApi, useSessionUser } from './provider';
 
 export const qk = {
@@ -36,6 +36,16 @@ export const qk = {
   documents: ['driver-documents'] as const,
   board: ['dispatch-board'] as const,
   roster: ['dispatch-roster'] as const,
+  receipts: (id: string) => ['job-receipts', id] as const,
+  myRating: (id: string) => ['my-rating', id] as const,
+  customerContact: (id: string) => ['customer-contact', id] as const,
+  adminJobs: (key: string) => ['admin-jobs', key] as const,
+  adminJob: (id: string) => ['admin-job', id] as const,
+  adminDriver: (id: string) => ['admin-driver', id] as const,
+  customers: (q: string) => ['admin-customers', q] as const,
+  fareHistory: ['admin-fare-history'] as const,
+  adminLandmarks: ['admin-landmarks'] as const,
+  dailyStats: (days: number) => ['admin-daily-stats', days] as const,
 };
 
 // ---------------------------------------------------------------- shared
@@ -104,7 +114,14 @@ export function useActiveJob() {
   useEffect(() => {
     if (!userId) return;
     return api.jobs.onMyJobsChange(userId, (job) => {
+      const previous = queryClient.getQueryData<{ status?: string }>(qk.job(job.id));
       queryClient.setQueryData(qk.job(job.id), job);
+      // Same reason as useJob(): whichever channel sees the status change
+      // first must refresh the priced shopping list and receipt photo.
+      if (previous?.status !== job.status) {
+        void queryClient.invalidateQueries({ queryKey: qk.jobItems(job.id) });
+        void queryClient.invalidateQueries({ queryKey: qk.receipts(job.id) });
+      }
       void queryClient.invalidateQueries({ queryKey: qk.activeJob });
       void queryClient.invalidateQueries({ queryKey: qk.jobHistory });
     });
@@ -125,9 +142,22 @@ export function useJob(jobId: string | null | undefined) {
 
   useEffect(() => {
     if (!jobId) return;
-    return api.jobs.onJobChange(jobId, (job) => {
-      queryClient.setQueryData(qk.job(jobId), job);
-    });
+    return api.jobs.onJobChange(
+      jobId,
+      (job) => {
+        const previous = queryClient.getQueryData<{ status?: string }>(qk.job(jobId));
+        queryClient.setQueryData(qk.job(jobId), job);
+        // A status change is when the shopping list gets its real prices
+        // (receipt submitted) and when a receipt photo appears. Without
+        // this the approval screen showed every item at PHP 0 beside a
+        // correct total.
+        if (previous?.status !== job.status) {
+          void queryClient.invalidateQueries({ queryKey: qk.jobItems(jobId) });
+          void queryClient.invalidateQueries({ queryKey: qk.receipts(jobId) });
+        }
+      },
+      'detail',
+    );
   }, [api, jobId, queryClient]);
 
   return query;
@@ -195,6 +225,67 @@ export function useCreateJob() {
   });
 }
 
+export function useRejectErrandTotal() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ jobId, reason }: { jobId: string; reason?: string }) =>
+      api.jobs.rejectErrandTotal(jobId, reason ?? ''),
+    onSuccess: (job) => {
+      queryClient.setQueryData(qk.job(job.id), job);
+      void queryClient.invalidateQueries({ queryKey: qk.activeJob });
+    },
+  });
+}
+
+/** Receipt photos for an errand, with signed links ready to show. */
+export function useJobReceipts(jobId: string | null | undefined) {
+  const api = useApi();
+  return useQuery({
+    queryKey: qk.receipts(jobId ?? 'none'),
+    queryFn: async () => {
+      const rows = await api.jobs.receipts(jobId!);
+      return Promise.all(
+        rows.map(async (row) => ({
+          ...row,
+          url: await api.files.signedUrl('receipts', row.storage_path).catch(() => null),
+        })),
+      );
+    },
+    enabled: !!jobId,
+    // Signed links last ten minutes; refresh well inside that.
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useMyRating(jobId: string | null | undefined) {
+  const api = useApi();
+  return useQuery({
+    queryKey: qk.myRating(jobId ?? 'none'),
+    queryFn: () => api.jobs.myRating(jobId!),
+    enabled: !!jobId,
+  });
+}
+
+export function useSavePlace() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Parameters<typeof api.places.save>[0]) => api.places.save(input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.savedPlaces }),
+  });
+}
+
+export function useRemovePlace() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.places.remove(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.savedPlaces }),
+  });
+}
+
 export function useCancelJob() {
   const api = useApi();
   const queryClient = useQueryClient();
@@ -206,6 +297,8 @@ export function useCancelJob() {
       queryClient.setQueryData(qk.job(job.id), job);
       void queryClient.invalidateQueries({ queryKey: qk.activeJob });
       void queryClient.invalidateQueries({ queryKey: qk.jobHistory });
+      void queryClient.invalidateQueries({ queryKey: qk.driverActiveJob });
+      void queryClient.invalidateQueries({ queryKey: qk.me });
     },
   });
 }
@@ -230,8 +323,9 @@ export function useRateJob() {
   return useMutation({
     mutationFn: ({ jobId, stars, comment }: { jobId: string; stars: number; comment?: string }) =>
       api.jobs.rate(jobId, stars, comment ?? ''),
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
       void queryClient.invalidateQueries({ queryKey: qk.jobHistory });
+      void queryClient.invalidateQueries({ queryKey: qk.myRating(vars.jobId) });
     },
   });
 }
@@ -260,6 +354,18 @@ export function useDriverMe() {
     queryFn: () => api.driver.me(),
     enabled: !!userId,
     refetchInterval: 60_000,
+  });
+}
+
+export function useRegisterDriver() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Parameters<typeof api.driver.register>[0]) => api.driver.register(input),
+    onSuccess: (driver) => {
+      queryClient.setQueryData(qk.me, driver);
+      void queryClient.invalidateQueries({ queryKey: qk.profile });
+    },
   });
 }
 
@@ -310,24 +416,64 @@ export function useDriverActiveJob() {
   const queryClient = useQueryClient();
   const { userId } = useSessionUser();
 
+  // Home, job and receipt screens each mount this hook at once. Channel
+  // names must differ per mount: freshChannel() evicts a same-named
+  // channel, so a shared name meant opening /job killed home's realtime.
+  const instance = useId().replace(/[^a-zA-Z0-9]/g, '');
+
   const query = useQuery({
     queryKey: qk.driverActiveJob,
     queryFn: () => api.driver.activeJob(),
     enabled: !!userId,
-    refetchInterval: (q) => (q.state.data ? 15_000 : false),
+    // Polled even with no job: a dispatcher can assign one by hand, which
+    // never produces an offer, and the realtime channel below is not to be
+    // trusted on a budget phone.
+    refetchInterval: (q) => (q.state.data ? 10_000 : 15_000),
   });
 
   const jobId = query.data?.id;
 
   useEffect(() => {
+    if (!userId) return;
+    return api.driver.onAssignedJobChange(
+      userId,
+      (job) => {
+        queryClient.setQueryData(qk.job(job.id), job);
+        void queryClient.invalidateQueries({ queryKey: qk.driverActiveJob });
+        void queryClient.invalidateQueries({ queryKey: qk.me });
+      },
+      instance,
+    );
+  }, [api, queryClient, userId, instance]);
+
+  useEffect(() => {
     if (!jobId) return;
-    return api.jobs.onJobChange(jobId, (job) => {
-      queryClient.setQueryData(qk.driverActiveJob, job);
-      queryClient.setQueryData(qk.job(job.id), job);
-    });
-  }, [api, jobId, queryClient]);
+    return api.jobs.onJobChange(
+      jobId,
+      (job) => {
+        // A late cancelled/completed update must not resurrect the job as
+        // "current" after useCompleteJob() cleared it.
+        queryClient.setQueryData(
+          qk.driverActiveJob,
+          LIVE_STATUSES.includes(job.status) ? job : null,
+        );
+        queryClient.setQueryData(qk.job(job.id), job);
+      },
+      `driver-${instance}`,
+    );
+  }, [api, jobId, queryClient, instance]);
 
   return query;
+}
+
+export function useCustomerContact(jobId: string | null | undefined) {
+  const api = useApi();
+  return useQuery({
+    queryKey: qk.customerContact(jobId ?? 'none'),
+    queryFn: () => api.driver.customerContact(jobId!),
+    enabled: !!jobId,
+    staleTime: 5 * 60_000,
+  });
 }
 
 export function useClaimJob() {
@@ -374,7 +520,8 @@ export function useCompleteJob() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (jobId: string) => api.driver.complete(jobId),
-    onSuccess: () => {
+    onSuccess: (job) => {
+      queryClient.setQueryData(qk.job(job.id), job);
       queryClient.setQueryData(qk.driverActiveJob, null);
       void queryClient.invalidateQueries({ queryKey: qk.me });
       void queryClient.invalidateQueries({ queryKey: qk.wallet });

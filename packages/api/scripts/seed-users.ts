@@ -81,10 +81,12 @@ const USERS: SeedUser[] = [
     },
   },
   { phone: '+639170000004', fullName: 'Ops Desk', role: 'dispatcher' },
+  // Pricing, roles and wallet corrections are admin-only; dispatchers run the board.
+  { phone: '+639170000005', fullName: 'Owner', role: 'admin' },
 ];
 
 async function findByPhone(phone: string): Promise<string | null> {
-  // listUsers has no phone filter, so page through. Fine for four users.
+  // listUsers has no phone filter, so page through. Fine for a handful of users.
   let page = 1;
   for (;;) {
     const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });

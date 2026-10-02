@@ -7,11 +7,15 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./react": "./src/react/index.ts"
+    "./react": "./src/react/index.ts",
+    "./admin": "./src/react/admin.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "seed:users": "node --experimental-strip-types scripts/seed-users.ts"
+    "seed:users": "node --experimental-strip-types scripts/seed-users.ts",
+    "test:e2e": "vite-node scripts/e2e.ts",
+    "demo:data": "vite-node scripts/demo-data.ts",
+    "rider:bot": "vite-node scripts/rider-bot.ts"
   },
   "dependencies": {
     "@fetch/core": "workspace:*",
@@ -22,6 +26,7 @@
     "@types/node": "^24.3.1",
     "@types/react": "~19.2.2",
     "react": "19.2.3",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "vite-node": "^3.2.4"
   }
 }

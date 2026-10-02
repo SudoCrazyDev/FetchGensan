@@ -1,26 +1,37 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
 
 import { humanizeError } from '@fetch/api';
-import { useApi, useRecordTopup, useRoster } from '@fetch/api/react';
-import { formatPeso, formatPhPhone, pesos } from '@fetch/core';
+import type { DriverRosterRow, DriverStatus } from '@fetch/api';
+import { useSetDriverStatus } from '@fetch/api/admin';
+import { useRoster } from '@fetch/api/react';
+import { formatPeso, formatPhPhone } from '@fetch/core';
 
 import { Shell } from '@/components/Shell';
-import { Badge, Button, Card, Stat } from '@/components/ui';
+import { TopupDialog } from '@/components/TopupDialog';
+import { Badge, Button, Card, PageHeader, PromptDialog, Stat, inputClass } from '@/components/ui';
 
 function minutesSince(iso: string | null): number | null {
   if (!iso) return null;
   return Math.round((Date.now() - new Date(iso).getTime()) / 60_000);
 }
 
+const linkButton =
+  'rounded-lg border border-line bg-raised px-3 py-2 text-sm font-semibold hover:bg-line';
+
 export default function DriversPage() {
-  const api = useApi();
-  const { data: roster, isLoading, refetch } = useRoster();
-  const topup = useRecordTopup();
+  const { data: roster, isLoading, error } = useRoster();
+  const setDriverStatus = useSetDriverStatus();
 
   const [filter, setFilter] = useState<'all' | 'online' | 'pending' | 'owing'>('all');
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [topupFor, setTopupFor] = useState<DriverRosterRow | null>(null);
+  const [statusFor, setStatusFor] = useState<{
+    driver: DriverRosterRow;
+    status: DriverStatus;
+  } | null>(null);
 
   const stats = useMemo(() => {
     const rows = roster ?? [];
@@ -34,7 +45,14 @@ export default function DriversPage() {
   }, [roster]);
 
   const visible = useMemo(() => {
-    const rows = roster ?? [];
+    const term = search.trim().toLowerCase();
+    const rows = (roster ?? []).filter(
+      (d) =>
+        !term ||
+        d.full_name.toLowerCase().includes(term) ||
+        d.phone.includes(term) ||
+        d.plate_number.toLowerCase().includes(term),
+    );
     switch (filter) {
       case 'online':
         return rows.filter((d) => d.is_online);
@@ -45,38 +63,19 @@ export default function DriversPage() {
       default:
         return rows;
     }
-  }, [roster, filter]);
+  }, [roster, filter, search]);
 
-  async function setStatus(driverId: string, status: string) {
-    setBusyId(driverId);
-    try {
-      await api.dispatch.setDriverStatus(driverId, status);
-      await refetch();
-    } catch (e) {
-      window.alert(humanizeError(e));
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  function recordTopup(driverId: string, owed: number) {
-    const input = window.prompt(
-      `How much cash did they hand over? (pesos)\nThey currently owe ${formatPeso(owed)}.`,
-      String(Math.ceil(owed / 100)),
+  function changeStatus(driverId: string, status: DriverStatus, reason = '') {
+    setDriverStatus.mutate(
+      { driverId, status, reason },
+      {
+        onSuccess: () => setStatusFor(null),
+        onError: (e) => {
+          // Reject/suspend errors show inside their dialog; approve has none.
+          if (!statusFor) window.alert(humanizeError(e));
+        },
+      },
     );
-    if (input === null) return;
-
-    const amount = Number(input);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      window.alert('Enter a positive amount in pesos.');
-      return;
-    }
-
-    topup.mutate({
-      driverId,
-      amountCentavos: pesos(amount),
-      note: 'Cash top-up at dispatch office',
-    });
   }
 
   const FILTERS = [
@@ -86,9 +85,16 @@ export default function DriversPage() {
     { key: 'owing' as const, label: `Owing commission (${stats.owing})` },
   ];
 
+  const busy = (id: string) => setDriverStatus.isPending && setDriverStatus.variables?.driverId === id;
+
   return (
     <Shell>
       <div className="flex flex-col gap-5">
+        <PageHeader
+          title="Riders"
+          subtitle="Approve sign-ups, review documents, and settle commission."
+        />
+
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <Stat label="Registered" value={String(stats.total)} />
           <Stat label="Online now" value={String(stats.online)} tone="text-ok" />
@@ -110,7 +116,13 @@ export default function DriversPage() {
           />
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            className={`${inputClass} max-w-xs`}
+            placeholder="Search name, phone or plate"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
           {FILTERS.map((f) => (
             <Button
               key={f.key}
@@ -126,23 +138,31 @@ export default function DriversPage() {
           <Card>
             <p className="text-sm text-muted">Loading roster…</p>
           </Card>
+        ) : error ? (
+          <Card>
+            <p className="text-sm text-bad">{humanizeError(error)}</p>
+          </Card>
         ) : visible.length === 0 ? (
           <Card>
-            <p className="py-6 text-center text-sm text-muted">No drivers match that filter.</p>
+            <p className="py-6 text-center text-sm text-muted">No riders match that filter.</p>
           </Card>
         ) : (
           <div className="flex flex-col gap-3">
             {visible.map((driver) => {
               const owed = Math.abs(Math.min(0, driver.wallet_balance_centavos));
-              const blocked =
-                driver.wallet_balance_centavos <= driver.credit_floor_centavos;
+              const blocked = driver.wallet_balance_centavos <= driver.credit_floor_centavos;
               const staleMinutes = minutesSince(driver.location_updated_at);
 
               return (
                 <Card key={driver.id}>
                   <div className="flex flex-col gap-3">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-semibold">{driver.full_name || 'Unnamed'}</span>
+                      <Link
+                        href={`/drivers/${driver.id}`}
+                        className="font-semibold hover:text-brand hover:underline"
+                      >
+                        {driver.full_name || 'Unnamed'}
+                      </Link>
                       <a className="text-sm text-info hover:underline" href={`tel:${driver.phone}`}>
                         {formatPhPhone(driver.phone)}
                       </a>
@@ -175,7 +195,7 @@ export default function DriversPage() {
 
                       <span className="ml-auto text-sm text-muted">
                         {driver.rating !== null
-                          ? `★ ${driver.rating.toFixed(1)} (${driver.rating_count})`
+                          ? `★ ${Number(driver.rating).toFixed(1)} (${driver.rating_count})`
                           : 'no rating'}
                       </span>
                     </div>
@@ -198,9 +218,7 @@ export default function DriversPage() {
                           Completed
                         </div>
                         <div className="tabular-nums">{driver.completed_jobs}</div>
-                        <div className="text-xs text-muted">
-                          {driver.cancelled_jobs} cancelled
-                        </div>
+                        <div className="text-xs text-muted">{driver.cancelled_jobs} cancelled</div>
                       </div>
 
                       <div>
@@ -244,15 +262,15 @@ export default function DriversPage() {
                       {driver.status === 'pending' ? (
                         <>
                           <Button
-                            disabled={busyId === driver.id}
-                            onClick={() => void setStatus(driver.id, 'approved')}
+                            disabled={busy(driver.id)}
+                            onClick={() => changeStatus(driver.id, 'approved')}
                           >
                             Approve
                           </Button>
                           <Button
                             variant="danger"
-                            disabled={busyId === driver.id}
-                            onClick={() => void setStatus(driver.id, 'rejected')}
+                            disabled={busy(driver.id)}
+                            onClick={() => setStatusFor({ driver, status: 'rejected' })}
                           >
                             Reject
                           </Button>
@@ -260,30 +278,31 @@ export default function DriversPage() {
                       ) : driver.status === 'approved' ? (
                         <Button
                           variant="danger"
-                          disabled={busyId === driver.id}
-                          onClick={() => void setStatus(driver.id, 'suspended')}
+                          disabled={busy(driver.id)}
+                          onClick={() => setStatusFor({ driver, status: 'suspended' })}
                         >
                           Suspend
                         </Button>
                       ) : (
                         <Button
                           variant="secondary"
-                          disabled={busyId === driver.id}
-                          onClick={() => void setStatus(driver.id, 'approved')}
+                          disabled={busy(driver.id)}
+                          onClick={() => changeStatus(driver.id, 'approved')}
                         >
                           Reinstate
                         </Button>
                       )}
 
-                      {owed > 0 ? (
-                        <Button
-                          variant="secondary"
-                          disabled={topup.isPending}
-                          onClick={() => recordTopup(driver.id, owed)}
-                        >
-                          Record cash top-up
-                        </Button>
-                      ) : null}
+                      <Button
+                        variant="secondary"
+                        onClick={() => setTopupFor(driver)}
+                      >
+                        Record cash top-up
+                      </Button>
+
+                      <Link href={`/drivers/${driver.id}`} className={linkButton}>
+                        {driver.pending_documents > 0 ? 'Review documents' : 'Details & wallet'}
+                      </Link>
                     </div>
                   </div>
                 </Card>
@@ -292,6 +311,31 @@ export default function DriversPage() {
           </div>
         )}
       </div>
+
+      <TopupDialog driver={topupFor} onClose={() => setTopupFor(null)} />
+
+      <PromptDialog
+        open={statusFor !== null}
+        title={
+          statusFor?.status === 'rejected'
+            ? `Reject ${statusFor.driver.full_name || 'this rider'}?`
+            : `Suspend ${statusFor?.driver.full_name || 'this rider'}?`
+        }
+        description="They are taken offline immediately. The reason is kept on their record."
+        label="Reason"
+        placeholder={
+          statusFor?.status === 'rejected' ? 'Licence expired' : 'Customer complaint, under review'
+        }
+        confirmLabel={statusFor?.status === 'rejected' ? 'Reject' : 'Suspend'}
+        danger
+        required
+        busy={setDriverStatus.isPending}
+        error={setDriverStatus.error ? humanizeError(setDriverStatus.error) : null}
+        onCancel={() => setStatusFor(null)}
+        onConfirm={(reason) => {
+          if (statusFor) changeStatus(statusFor.driver.id, statusFor.status, reason.trim());
+        }}
+      />
     </Shell>
   );
 }
