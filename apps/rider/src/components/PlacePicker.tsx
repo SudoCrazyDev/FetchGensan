@@ -17,19 +17,11 @@
 
 import { useMemo, useState } from 'react';
 import { FlatList, Modal, Pressable, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useLandmarkSearch, useSavedPlaces } from '@fetch/api/react';
 import { GENSAN_REGION, type LatLng, formatDistance } from '@fetch/core';
-import {
-  Button,
-  Card,
-  Divider,
-  Field,
-  Row,
-  Stack,
-  Txt,
-  useTheme,
-} from '@fetch/ui';
+import { Button, Card, Divider, Field, Row, Stack, Txt, useTheme } from '@fetch/ui';
 
 import { MAP_AVAILABLE, PinMap } from './PinMap';
 
@@ -51,6 +43,7 @@ interface Props {
 
 export function PlacePicker({ visible, title, near, initial, onCancel, onPick }: Props) {
   const t = useTheme();
+  const insets = useSafeAreaInsets();
 
   const [query, setQuery] = useState('');
   const [pin, setPin] = useState<LatLng | null>(initial?.location ?? near ?? null);
@@ -89,8 +82,24 @@ export function PlacePicker({ visible, title, near, initial, onCancel, onPick }:
   }
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onCancel}>
-      <View style={{ flex: 1, backgroundColor: t.color.background, padding: t.space(4) }}>
+    // The app draws edge to edge, so the modal does too: without the inset
+    // padding the bottom button sits under Android's navigation bar.
+    <Modal
+      visible={visible}
+      animationType="slide"
+      onRequestClose={onCancel}
+      statusBarTranslucent
+      navigationBarTranslucent
+    >
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: t.color.background,
+          paddingHorizontal: t.space(4),
+          paddingTop: insets.top + t.space(4),
+          paddingBottom: insets.bottom + t.space(4),
+        }}
+      >
         <Row justify="space-between" style={{ marginBottom: t.space(3) }}>
           <Txt size="title" weight="700">
             {title}
