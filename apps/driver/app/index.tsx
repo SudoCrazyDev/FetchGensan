@@ -205,6 +205,13 @@ export default function DriverHome() {
                     ? 'Dispatch is reviewing your documents. You can go online once approved.'
                     : 'Contact dispatch to sort this out.'}
                 </Txt>
+                {driver?.status === 'pending' ? (
+                  <Button
+                    label="Upload documents"
+                    variant="secondary"
+                    onPress={() => router.push('/onboarding')}
+                  />
+                ) : null}
               </Stack>
             </Card>
           ) : null}

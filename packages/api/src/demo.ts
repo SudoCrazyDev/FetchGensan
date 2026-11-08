@@ -264,8 +264,7 @@ export function createDemoApi(opts: DemoOptions): Api {
   let walletBalance = -3750;
 
   // The driver starts registered and approved, so the app opens on the main
-  // screen. Onboarding is not reachable: the app's own gate sends a driver
-  // with a row straight past it.
+  // screen rather than onboarding.
   let driver: Driver | null = isDriverApp
     ? {
         id: DRIVER_ID,

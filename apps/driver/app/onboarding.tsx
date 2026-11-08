@@ -11,13 +11,14 @@
  * for a conversation with whoever handles your compliance, not as advice.
  */
 
+import { useQueryClient } from '@tanstack/react-query';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Alert, ScrollView, View } from 'react-native';
 
 import { humanizeError } from '@fetch/api';
-import { useApi, useDriverDocuments, useProfile } from '@fetch/api/react';
+import { qk, useApi, useDriverDocuments, useDriverMe, useProfile } from '@fetch/api/react';
 import { driverProfileSchema } from '@fetch/core';
 import {
   Badge,
@@ -80,19 +81,24 @@ export default function Onboarding() {
   const router = useRouter();
   const apiHooks = useApi();
 
+  const queryClient = useQueryClient();
+
   const { data: profile } = useProfile();
+  const { data: driver } = useDriverMe();
   const { data: documents, refetch: refetchDocuments } = useDriverDocuments();
 
-  const [step, setStep] = useState<'vehicle' | 'documents'>('vehicle');
+  // A driver who already saved their motorcycle is back to finish or
+  // replace documents, so start them there with their details kept.
+  const [step, setStep] = useState<'vehicle' | 'documents'>(driver ? 'documents' : 'vehicle');
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState<string | null>(null);
 
   const [form, setForm] = useState({
-    vehicle_make: '',
-    vehicle_model: '',
-    vehicle_color: '',
-    plate_number: '',
-    license_number: '',
+    vehicle_make: driver?.vehicle_make ?? '',
+    vehicle_model: driver?.vehicle_model ?? '',
+    vehicle_color: driver?.vehicle_color ?? '',
+    plate_number: driver?.plate_number ?? '',
+    license_number: driver?.license_number ?? '',
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -112,7 +118,10 @@ export default function Onboarding() {
     setErrors({});
     setSaving(true);
     try {
-      await apiHooks.driver.register(parsed.data);
+      const saved = await apiHooks.driver.register(parsed.data);
+      // The root layout routes on this query. Left stale, it still says
+      // "no driver" for up to a minute and sends them back here after Done.
+      queryClient.setQueryData(qk.me, saved);
       successFeedback();
       setStep('documents');
     } catch (e) {

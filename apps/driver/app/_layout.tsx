@@ -47,10 +47,12 @@ function AuthGate() {
     // cold start.
     if (driverLoading) return;
 
+    // One way only. A registered driver may be on onboarding on purpose:
+    // step one creates the driver row, so sending everyone with a row back
+    // home would throw a new driver out halfway through the documents step.
+    // Onboarding leaves by itself when they finish.
     if (!driver && !inOnboarding) {
       router.replace('/onboarding');
-    } else if (driver && inOnboarding) {
-      router.replace('/');
     }
   }, [userId, sessionLoading, driver, driverLoading, inAuthFlow, inOnboarding, router]);
 
