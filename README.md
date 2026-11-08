@@ -69,6 +69,29 @@ pnpm driver   # Expo dev server
 pnpm admin    # http://localhost:3000
 ```
 
+### Demo mode: every screen, no backend
+
+Set `EXPO_PUBLIC_DEMO=1` and the rider and driver apps run against an
+in-memory fake (`packages/api/src/demo.ts`) instead of Supabase. No env
+file, database or edge function is needed:
+
+```bash
+EXPO_PUBLIC_DEMO=1 pnpm rider
+```
+
+The rider app opens signed in as Maria Santos, with saved places and past
+bookings. A booking is "accepted" a few seconds after it is made and runs
+through to completion by itself; an errand stops at the receipt for you to
+approve. The driver app opens as an approved driver: go online and an offer
+appears, then every status button works through to the wallet. Signing out
+shows the sign-in screen, and any number and password signs back in.
+Nothing persists across a restart. Driver onboarding is not reachable,
+because the app sends a registered driver straight past it.
+
+The fake fakes everything except fare maths, which comes from
+`packages/core`. It skips every rule the server enforces, so never ship a
+build made with this flag to real users.
+
 ## How it fits together
 
 ```
