@@ -14,7 +14,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { JobStatus, JobType } from '@fetch/core';
 
 import { LIVE_STATUSES, type CreateJobInput } from '../api';
-import type { CredentialsPatch, NewUserInput, PermissionKey } from '../types';
+import type {
+  CredentialsPatch,
+  CustomerDocType,
+  NewUserInput,
+  PermissionKey,
+  Profile,
+} from '../types';
 import { useApi, useSessionUser } from './provider';
 
 export const qk = {
@@ -35,6 +41,7 @@ export const qk = {
   wallet: ['driver-wallet'] as const,
   earnings: (key: string) => ['driver-earnings', key] as const,
   documents: ['driver-documents'] as const,
+  customerDocuments: ['customer-documents'] as const,
   board: ['dispatch-board'] as const,
   roster: ['dispatch-roster'] as const,
   receipts: (id: string) => ['job-receipts', id] as const,
@@ -338,11 +345,7 @@ export function useRateJob() {
   });
 }
 
-export function useFareQuote(
-  jobType: JobType,
-  distanceMeters: number | null,
-  durationSeconds = 0,
-) {
+export function useFareQuote(jobType: JobType, distanceMeters: number | null, durationSeconds = 0) {
   const api = useApi();
   return useQuery({
     queryKey: ['fare-quote', jobType, distanceMeters, durationSeconds],
@@ -786,4 +789,38 @@ export function useSetUserBlocked() {
 export function useDeleteUser() {
   const api = useApi();
   return useAccessMutation((userId: string) => api.access.deleteUser(userId));
+}
+
+// ---------------------------------------------------------------- customer ID
+
+export function useCustomerDocuments() {
+  const api = useApi();
+  const { userId } = useSessionUser();
+  return useQuery({
+    queryKey: qk.customerDocuments,
+    queryFn: () => api.customer.documents(),
+    enabled: !!userId,
+  });
+}
+
+/**
+ * Records one uploaded ID photo. The fourth one verifies the account, and
+ * the profile in the cache is updated straight away so the layout lets the
+ * customer through without waiting for a refetch.
+ */
+export function useRecordCustomerDocument() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ docType, path }: { docType: CustomerDocType; path: string }) =>
+      api.customer.recordDocument(docType, path),
+    onSuccess: (verifiedAt) => {
+      void queryClient.invalidateQueries({ queryKey: qk.customerDocuments });
+      if (verifiedAt) {
+        queryClient.setQueryData<Profile | null | undefined>(qk.profile, (p) =>
+          p ? { ...p, verified_at: verifiedAt } : p,
+        );
+      }
+    },
+  });
 }

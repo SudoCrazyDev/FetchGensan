@@ -135,8 +135,29 @@ works without deep links. A successful reset signs out every other device.
 Accounts from the OTP era have no password yet; the sign-in screen tells
 them to use Forgot password, which doubles as "set a password".
 
-There is no sign-up screen yet, so public sign-up is off in `config.toml`.
-Staff create accounts in the console.
+**Customers sign themselves up in the rider app, in two steps.** Public
+sign-up stays off in Supabase Auth -- otherwise anyone holding the
+publishable key could create accounts directly -- so sign-up goes through
+the `auth` function too:
+
+1. Name, email, mobile number (the app shows a fixed `+63`) and a password.
+   `register/start` creates the account with the email unconfirmed, and
+   Supabase emails a 6-digit code using the "Confirm signup" template
+   (`supabase/templates/confirmation.html`). `register/verify` checks the
+   code, attaches the phone, and signs them in. The phone is attached only
+   after the email is proven, so a half-finished sign-up cannot sign in or
+   hold a number. The phone itself is not verified by SMS.
+2. Four photos: ID front and back, a selfie, and a selfie holding the ID,
+   into the private `customer-ids` bucket. `record_customer_document()`
+   checks each file really is in storage under their own folder and
+   **approves the account automatically** when the fourth is in. Nobody
+   reviews the photos first; they are a record for after an incident.
+
+Until approved, `profiles.verified_at` is null and the database refuses
+their bookings (a trigger on `jobs`, so no booking path can skip it).
+Accounts made by staff or the seed script, and every account that existed
+before this, count as verified. Staff still create rider (driver) and staff
+accounts in the console.
 
 **Staff access is role-based.** `permissions` is a fixed catalogue with one
 row per thing the database actually checks. `roles` bundle permissions and
@@ -314,6 +335,7 @@ Migrations are ordered and each one is self-contained:
 | `…1002000100_admin_console` | Staff RPCs (approve, assign, block, fares, landmarks, wallet), `admin_*` views |
 | `…1002000200_app_flow_fixes` | `register_driver()`, receipt reject/zero-cost cancel, push triggers, grants views need |
 | `…1003000100_reconcile_rbac` | Puts the console RPCs on `has_permission()`, adds `wallet.adjust`, merges the duplicate assign/status RPCs |
+| `…1108000100_customer_verification` | Customer ID photos, `customer-ids` bucket, auto-approval, the booking gate, the sign-up lookup |
 
 ## Before you launch
 
@@ -357,7 +379,15 @@ bite if skipped.
   in `config.toml` for the local stack.
 - **Configure Auth on the hosted project to match `config.toml`.** The
   local file does not reach production. In the dashboard:
-  - Turn off "Allow new users to sign up" until a sign-up screen exists.
+  - Turn off "Allow new users to sign up". Customers still sign up: the
+    `auth` function creates their accounts with the service role.
+  - Keep "Confirm email" on, and replace the "Confirm signup" email
+    template with `supabase/templates/confirmation.html`, which shows the
+    6-digit `{{ .Token }}` the rider app asks for.
+  - **Set up custom SMTP** (Authentication -> Emails -> SMTP), e.g. Resend
+    or Amazon SES. Supabase's built-in mailer only delivers to your own
+    team's addresses and only a few emails an hour, so real customers
+    would never get their sign-up code.
   - Keep the Email provider enabled, or staff cannot sign in by email.
   - Set the minimum password length to 8.
   - Replace the "Reset password" email template with one that shows

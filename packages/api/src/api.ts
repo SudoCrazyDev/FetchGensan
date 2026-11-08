@@ -13,6 +13,9 @@ import { toPoint } from '@fetch/core';
 
 import { ApiError, type FetchClient } from './client';
 import type {
+  CustomerDocType,
+  CustomerDocument,
+  RegisterInput,
   AdminCustomerRow,
   AdminJobRow,
   AdminLandmarkRow,
@@ -198,6 +201,33 @@ export function createApi(client: FetchClient) {
       return adoptSession(payload);
     },
 
+    /**
+     * Customer sign-up, step one: creates the account and emails a 6-digit
+     * code. Throws ApiError with `email_taken`, `phone_taken`,
+     * `weak_password`, `invalid_*` or `rate_limited`.
+     */
+    async registerStart(input: RegisterInput): Promise<{ email: string }> {
+      return callFunction('auth/register/start', 'POST', {
+        full_name: input.fullName,
+        email: input.email,
+        phone: input.phone,
+        password: input.password,
+      });
+    },
+
+    /** Checks the emailed code and signs the new customer in. */
+    async registerVerify(email: string, code: string): Promise<SignInResult> {
+      const payload = await callFunction<SessionPayload>('auth/register/verify', 'POST', {
+        email,
+        code,
+      });
+      return adoptSession(payload);
+    },
+
+    async registerResend(email: string): Promise<void> {
+      await callFunction('auth/register/resend', 'POST', { email });
+    },
+
     async signOut(): Promise<void> {
       const { error } = await client.auth.signOut();
       if (error) throw error;
@@ -258,7 +288,7 @@ export function createApi(client: FetchClient) {
      * works unchanged on web.
      */
     async uploadFromUri(
-      bucket: 'driver-docs' | 'receipts' | 'avatars',
+      bucket: 'driver-docs' | 'receipts' | 'avatars' | 'customer-ids',
       path: string,
       uri: string,
       contentType = 'image/jpeg',
@@ -725,7 +755,9 @@ export function createApi(client: FetchClient) {
       return (data ?? []) as WalletTransaction[];
     },
 
-    async earnings(since: Date): Promise<{ jobs: number; grossCentavos: number; commissionCentavos: number }> {
+    async earnings(
+      since: Date,
+    ): Promise<{ jobs: number; grossCentavos: number; commissionCentavos: number }> {
       const userId = await currentUserId(client);
       const { data, error } = await client
         .from('jobs')
@@ -1262,7 +1294,44 @@ export function createApi(client: FetchClient) {
     },
   };
 
-  return { client, auth, profile, files, pricing, places, jobs, driver, dispatch, access };
+  // ------------------------------------------------------------- customer ID
+
+  const customer = {
+    /** The caller's ID photos on file. */
+    async documents(): Promise<CustomerDocument[]> {
+      const { data, error } = await client.from('customer_documents').select('*');
+      if (error) throw error;
+      return (data ?? []) as CustomerDocument[];
+    },
+
+    /**
+     * Records an uploaded photo. Answers with the account's verified_at,
+     * which turns non-null the moment the fourth photo is in: approval is
+     * automatic.
+     */
+    async recordDocument(docType: CustomerDocType, storagePath: string): Promise<string | null> {
+      const { data, error } = await client.rpc('record_customer_document', {
+        p_doc_type: docType,
+        p_storage_path: storagePath,
+      });
+      if (error) throw error;
+      return (data as string | null) ?? null;
+    },
+  };
+
+  return {
+    client,
+    auth,
+    profile,
+    files,
+    pricing,
+    places,
+    jobs,
+    driver,
+    dispatch,
+    access,
+    customer,
+  };
 }
 
 export type Api = ReturnType<typeof createApi>;

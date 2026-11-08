@@ -63,6 +63,12 @@ enable_confirmations = true
 # clicked, so the recovery email carries the 6-digit code.
 otp_length = 6
 
+# Customer sign-up: the auth function's `register` routes create the
+# account and Supabase emails this code, which the rider app asks for.
+[auth.email.template.confirmation]
+subject = "Your FetchGensan sign-up code"
+content_path = "./supabase/templates/confirmation.html"
+
 [auth.email.template.recovery]
 subject = "Your FetchGensan password reset code"
 content_path = "./supabase/templates/recovery.html"

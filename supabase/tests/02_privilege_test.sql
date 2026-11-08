@@ -153,7 +153,9 @@ begin
       'has_permission', 'my_permissions', 'can_manage_user', 'role_is_mine',
       'list_users', 'list_roles', 'create_role', 'update_role', 'delete_role',
       'set_user_roles', 'set_user_blocked', 'update_user_profile',
-      'set_driver_status', 'assign_job'
+      'set_driver_status', 'assign_job',
+      -- 20261108000100: customer ID verification
+      'record_customer_document'
     ]) as fn
     where not exists (
       select 1 from pg_proc p

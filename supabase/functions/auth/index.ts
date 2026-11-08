@@ -4,6 +4,9 @@
  *   POST /auth/login             { identifier, password }
  *   POST /auth/password/forgot   { identifier }
  *   POST /auth/password/reset    { identifier, code, password }
+ *   POST /auth/register/start    { full_name, email, phone, password }
+ *   POST /auth/register/verify   { email, code }
+ *   POST /auth/register/resend   { email }
  *
  * `identifier` is a PH mobile number in any common shape, or an email.
  *
@@ -17,7 +20,9 @@
  *   - five wrong passwords per account per 15 minutes, then a wait;
  *   - a high per-IP ceiling on top (see the migration for why it is high);
  *   - deactivated accounts are refused even with the right password;
- *   - forgot-password never reveals whether an account exists.
+ *   - forgot-password never reveals whether an account exists;
+ *   - customers sign themselves up with an emailed code, even though public
+ *     sign-up is off in Supabase Auth (see the register section).
  *
  * verify_jwt is off for this function in config.toml: nobody calling it
  * has a session yet.
@@ -44,6 +49,10 @@ const LIMITS = {
   forgotIp: { bucket: 'forgot:ip', max: 30, windowSeconds: 60 * 60 },
   resetAccount: { bucket: 'reset:id', max: 5, windowSeconds: 15 * 60 },
   resetIp: { bucket: 'reset:ip', max: 50, windowSeconds: 15 * 60 },
+  registerAccount: { bucket: 'register:id', max: 5, windowSeconds: 60 * 60 },
+  registerIp: { bucket: 'register:ip', max: 30, windowSeconds: 60 * 60 },
+  verifyAccount: { bucket: 'verify:id', max: 5, windowSeconds: 15 * 60 },
+  verifyIp: { bucket: 'verify:ip', max: 50, windowSeconds: 15 * 60 },
 } satisfies Record<string, Limit>;
 
 const DEACTIVATED =
@@ -265,6 +274,253 @@ async function reset(req: Request): Promise<Response> {
   return sessionResponse(fresh.session);
 }
 
+// ---------------------------------------------------------------- register
+//
+// Customer self sign-up. Public sign-up stays OFF in Supabase Auth, so
+// nobody can create an account by calling Auth directly with the
+// publishable key that ships in the app; accounts are created here, with
+// the service role, after these checks.
+//
+//   start   creates the account with the email UNconfirmed and the phone
+//           held back in app_metadata, then Supabase emails a 6-digit code
+//           (the "Confirm signup" template, supabase/templates/confirmation.html).
+//   verify  checks the code, which confirms the email, then attaches the
+//           phone and answers with a session.
+//
+// The phone is attached only after the email is proven, so a half-finished
+// sign-up cannot be used to sign in by phone, and cannot squat a number.
+// The phone itself is not verified -- the emailed code is the proof of
+// identity this flow asks for.
+//
+// New profiles default to verified (staff-made and seeded accounts), so
+// start marks a self-registered one unverified right after creating it.
+// The rider app then asks for ID photos, and record_customer_document()
+// approves the account once all four are in.
+
+const NAME_MAX = 80;
+
+function requireEmail(value: unknown): string {
+  const id = parseLoginIdentifier(str(value));
+  if (!id || id.kind !== 'email') {
+    throw new HttpError(400, 'Enter a valid email address.', 'invalid_email');
+  }
+  return id.value;
+}
+
+function requirePhone(value: unknown): string {
+  const raw = str(value);
+  // The app shows a fixed +63; accept the number with or without it.
+  const id = parseLoginIdentifier(raw.includes('@') ? '' : raw);
+  if (!id || id.kind !== 'phone') {
+    throw new HttpError(
+      400,
+      'Enter your mobile number after +63, e.g. 917 123 4567.',
+      'invalid_phone',
+    );
+  }
+  return id.value;
+}
+
+function requireName(value: unknown): string {
+  const name = str(value).trim().replace(/\s+/g, ' ');
+  if (name.length < 2) throw new HttpError(400, 'Enter your full name.', 'invalid_name');
+  if (name.length > NAME_MAX) {
+    throw new HttpError(400, `Keep your name under ${NAME_MAX} characters.`, 'invalid_name');
+  }
+  return name;
+}
+
+interface Lookup {
+  email_user_id: string | null;
+  email_confirmed: boolean;
+  self_registered: boolean;
+  phone_owner_id: string | null;
+}
+
+async function lookup(email: string, phone: string): Promise<Lookup> {
+  const { data, error } = await admin.rpc('registration_lookup', {
+    p_email: email,
+    p_phone: phone,
+  });
+  if (error) throw error;
+  const row = (data as Lookup[] | null)?.[0];
+  return (
+    row ?? {
+      email_user_id: null,
+      email_confirmed: false,
+      self_registered: false,
+      phone_owner_id: null,
+    }
+  );
+}
+
+const EMAIL_TAKEN = 'That email already has an account. Sign in instead, or use Forgot password.';
+const PHONE_TAKEN =
+  'That mobile number is already on an account. Sign in with it, or use a different number.';
+
+async function sendCode(email: string): Promise<void> {
+  const { error } = await anonClient().auth.resend({ type: 'signup', email });
+  if (error) {
+    const code = (error as { code?: string }).code ?? '';
+    if (code === 'over_email_send_rate_limit') {
+      throw new HttpError(
+        429,
+        'We have sent several codes already. Wait a minute and try again.',
+        'rate_limited',
+      );
+    }
+    console.error('sign-up code not sent', code || error.message);
+    throw new HttpError(502, 'We could not send the code. Please try again.', 'email_failed');
+  }
+}
+
+async function registerStart(req: Request): Promise<Response> {
+  const body = await readJson<{
+    full_name: string;
+    email: string;
+    phone: string;
+    password: string;
+  }>(req);
+  const fullName = requireName(body.full_name);
+  const email = requireEmail(body.email);
+  const phone = requirePhone(body.phone);
+  const password = str(body.password);
+  const problem = passwordProblem(password);
+  if (problem) throw new HttpError(400, problem, 'weak_password');
+
+  await hit(admin, LIMITS.registerIp, clientIp(req), 'Too many sign-ups from this network.');
+  await hit(admin, LIMITS.registerAccount, email, 'Too many sign-up attempts for this email.');
+
+  const found = await lookup(email, phone);
+
+  // Saying "already has an account" does tell a stranger the email is
+  // registered. Every sign-up form does; the alternative is a customer who
+  // cannot work out why no code ever arrives.
+  if (found.email_user_id && (found.email_confirmed || !found.self_registered)) {
+    throw new HttpError(409, EMAIL_TAKEN, 'email_taken');
+  }
+  if (found.phone_owner_id && found.phone_owner_id !== found.email_user_id) {
+    throw new HttpError(409, PHONE_TAKEN, 'phone_taken');
+  }
+
+  const app_metadata = { self_registered: true, pending_phone: phone };
+  const user_metadata = { full_name: fullName };
+
+  let userId: string;
+  if (found.email_user_id) {
+    // They started before and never entered the code. Start over with what
+    // they typed this time.
+    userId = found.email_user_id;
+    const { error } = await admin.auth.admin.updateUserById(userId, {
+      password,
+      user_metadata,
+      app_metadata,
+    });
+    if (error) throw new HttpError(400, error.message, 'weak_password');
+  } else {
+    const { data: created, error } = await admin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: false,
+      user_metadata,
+      app_metadata,
+    });
+    if (error) {
+      const code = (error as { code?: string }).code ?? '';
+      if (code === 'email_exists') throw new HttpError(409, EMAIL_TAKEN, 'email_taken');
+      if (code === 'weak_password') throw new HttpError(400, error.message, 'weak_password');
+      console.error('createUser failed', code || error.message);
+      throw new HttpError(
+        502,
+        'Sign-up is briefly unavailable. Please try again.',
+        'auth_unavailable',
+      );
+    }
+    userId = created.user.id;
+  }
+
+  // Unverified until the ID photos are in; see the note above.
+  const { error: profileError } = await admin
+    .from('profiles')
+    .update({ full_name: fullName, verified_at: null })
+    .eq('id', userId);
+  if (profileError) throw profileError;
+
+  await sendCode(email);
+  return json({ ok: true, email, message: 'We have emailed you a 6-digit code.' }, 202);
+}
+
+async function registerResend(req: Request): Promise<Response> {
+  const body = await readJson<{ email: string }>(req);
+  const email = requireEmail(body.email);
+
+  await hit(admin, LIMITS.registerIp, clientIp(req), 'Too many requests from this network.');
+  await hit(admin, LIMITS.registerAccount, email, 'We have already sent several codes.');
+
+  const found = await lookup(email, '');
+  if (found.email_user_id && !found.email_confirmed && found.self_registered) {
+    await sendCode(email);
+  }
+  // Same answer either way, so this cannot be used to test addresses.
+  return json({ ok: true, message: 'If that sign-up is waiting, we have sent a new code.' }, 202);
+}
+
+async function registerVerify(req: Request): Promise<Response> {
+  const body = await readJson<{ email: string; code: string }>(req);
+  const email = requireEmail(body.email);
+  const code = str(body.code).replace(/\s/g, '');
+  if (!/^\d{6}$/.test(code)) throw new HttpError(400, 'Enter the 6-digit code.', 'invalid_code');
+
+  await hit(admin, LIMITS.verifyIp, clientIp(req), 'Too many attempts from this network.');
+  await hit(admin, LIMITS.verifyAccount, email, 'Too many wrong codes. Request a new one.');
+
+  const { data, error } = await anonClient().auth.verifyOtp({ email, token: code, type: 'email' });
+  if (error || !data.session || !data.user) {
+    throw new HttpError(
+      400,
+      'That code is wrong or has expired. Request a new one.',
+      'invalid_code',
+    );
+  }
+
+  const user = data.user;
+  const meta = (user.app_metadata ?? {}) as { self_registered?: boolean; pending_phone?: string };
+  const phone = meta.pending_phone;
+
+  if (phone) {
+    // Someone may have taken the number between start and now.
+    const found = await lookup(email, phone);
+    if (found.phone_owner_id && found.phone_owner_id !== user.id) {
+      throw new HttpError(409, PHONE_TAKEN, 'phone_taken');
+    }
+
+    const { data: updated, error: updateError } = await admin.auth.admin.updateUserById(user.id, {
+      phone,
+      phone_confirm: true,
+      app_metadata: { self_registered: true, pending_phone: null },
+    });
+    if (updateError) {
+      const c = (updateError as { code?: string }).code ?? '';
+      if (c === 'phone_exists') throw new HttpError(409, PHONE_TAKEN, 'phone_taken');
+      throw updateError;
+    }
+    // handle_new_user() filed the email as the profile's phone; put the
+    // real number there now, in the +63 form the rest of the app uses.
+    const { error: profileError } = await admin
+      .from('profiles')
+      .update({ phone })
+      .eq('id', user.id);
+    if (profileError) throw profileError;
+
+    // The session was issued a moment before the phone was attached.
+    if (updated?.user) data.session.user = updated.user;
+  }
+
+  await clear(admin, LIMITS.verifyAccount, email);
+  await clear(admin, LIMITS.registerAccount, email);
+  return sessionResponse(data.session);
+}
+
 // ---------------------------------------------------------------- router
 
 serve(async (req) => {
@@ -277,6 +533,12 @@ serve(async (req) => {
       return forgot(req);
     case '/password/reset':
       return reset(req);
+    case '/register/start':
+      return registerStart(req);
+    case '/register/verify':
+      return registerVerify(req);
+    case '/register/resend':
+      return registerResend(req);
     default:
       throw new HttpError(404, 'Not found.', 'not_found');
   }

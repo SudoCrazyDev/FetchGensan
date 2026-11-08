@@ -38,6 +38,30 @@ export interface Profile {
   role: UserRole;
   is_blocked: boolean;
   created_at: string;
+  /**
+   * When the account was approved to book. Null only for a customer who
+   * signed themselves up and has not finished the ID photos yet.
+   */
+  verified_at: string | null;
+}
+
+/** The four photos a self-registered customer uploads. */
+export type CustomerDocType = 'id_front' | 'id_back' | 'selfie' | 'selfie_with_id';
+
+export interface CustomerDocument {
+  id: string;
+  profile_id: string;
+  doc_type: CustomerDocType;
+  storage_path: string;
+  created_at: string;
+}
+
+export interface RegisterInput {
+  fullName: string;
+  email: string;
+  /** Any common PH shape; the app sends +63 and the ten digits. */
+  phone: string;
+  password: string;
 }
 
 export interface Driver {

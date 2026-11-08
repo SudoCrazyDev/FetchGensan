@@ -3,7 +3,7 @@ import { Image, KeyboardAvoidingView, Platform, View } from 'react-native';
 
 import { humanizeError } from '@fetch/api';
 import { useApi } from '@fetch/api/react';
-import { Screen, SignInForm, Stack, Txt, brand, useTheme } from '@fetch/ui';
+import { Button, Screen, SignInForm, Stack, Txt, brand, useTheme } from '@fetch/ui';
 
 export default function SignIn() {
   const api = useApi();
@@ -45,6 +45,18 @@ export default function SignIn() {
                 router.push({ pathname: '/forgot-password', params: id ? { identifier: id } : {} })
               }
             />
+
+            <Stack gap={2}>
+              <Txt tone="muted" align="center">
+                New to {brand.name}?
+              </Txt>
+              <Button
+                label="Create an account"
+                variant="secondary"
+                size="lg"
+                onPress={() => router.push('/register')}
+              />
+            </Stack>
           </Stack>
         </View>
 

@@ -42,9 +42,7 @@ export function Screen({
   scroll?: boolean;
 }) {
   const t = useTheme();
-  const body = (
-    <View style={[{ flex: 1, padding: t.space(4) }, style]}>{children}</View>
-  );
+  const body = <View style={[{ flex: 1, padding: t.space(4) }, style]}>{children}</View>;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: t.color.background }} edges={edges}>
@@ -349,13 +347,29 @@ export interface FieldProps extends TextInputProps {
   label?: string;
   error?: string | null;
   hint?: string;
+  /** Fixed text inside the box, before what is typed: "+63". */
+  prefix?: string;
 }
 
 export const Field = forwardRef<TextInput, FieldProps>(function Field(
-  { label, error, hint, style, ...rest },
+  { label, error, hint, prefix, style, ...rest },
   ref,
 ) {
   const t = useTheme();
+
+  const box = {
+    minHeight: MIN_TOUCH,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: error ? t.color.danger : t.color.border,
+    backgroundColor: t.color.surface,
+    borderRadius: t.radius.md,
+  } as const;
+  const text = {
+    paddingHorizontal: t.space(3.5),
+    paddingVertical: t.space(3),
+    fontSize: t.font.body,
+    color: t.color.text,
+  } as const;
 
   return (
     <View style={{ gap: t.space(1.5) }}>
@@ -364,25 +378,26 @@ export const Field = forwardRef<TextInput, FieldProps>(function Field(
           {label}
         </Txt>
       ) : null}
-      <TextInput
-        ref={ref}
-        placeholderTextColor={t.color.textMuted}
-        style={[
-          {
-            minHeight: MIN_TOUCH,
-            borderWidth: StyleSheet.hairlineWidth,
-            borderColor: error ? t.color.danger : t.color.border,
-            backgroundColor: t.color.surface,
-            borderRadius: t.radius.md,
-            paddingHorizontal: t.space(3.5),
-            paddingVertical: t.space(3),
-            fontSize: t.font.body,
-            color: t.color.text,
-          },
-          style,
-        ]}
-        {...rest}
-      />
+      {prefix ? (
+        <View style={[box, { flexDirection: 'row', alignItems: 'center' }]}>
+          <Txt weight="600" style={{ paddingLeft: t.space(3.5) }}>
+            {prefix}
+          </Txt>
+          <TextInput
+            ref={ref}
+            placeholderTextColor={t.color.textMuted}
+            style={[text, { flex: 1, paddingLeft: t.space(2) }, style]}
+            {...rest}
+          />
+        </View>
+      ) : (
+        <TextInput
+          ref={ref}
+          placeholderTextColor={t.color.textMuted}
+          style={[box, text, style]}
+          {...rest}
+        />
+      )}
       {error ? (
         <Txt size="small" tone="danger">
           {error}

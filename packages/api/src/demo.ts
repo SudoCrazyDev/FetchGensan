@@ -34,6 +34,7 @@ import {
 import type { Api, CreateJobInput } from './api';
 import type { FetchClient } from './client';
 import type {
+  CustomerDocument,
   Driver,
   DriverDocument,
   DriverPosition,
@@ -250,6 +251,7 @@ export function createDemoApi(opts: DemoOptions): Api {
         role: 'driver',
         is_blocked: false,
         created_at: minutesAgo(60 * 24 * 90),
+        verified_at: minutesAgo(60 * 24 * 90),
       }
     : {
         id: CUSTOMER_ID,
@@ -259,7 +261,13 @@ export function createDemoApi(opts: DemoOptions): Api {
         role: 'customer',
         is_blocked: false,
         created_at: minutesAgo(60 * 24 * 30),
+        verified_at: minutesAgo(60 * 24 * 30),
       };
+
+  // Sign-up in the demo: any 6-digit code is accepted, and the new account
+  // replaces Maria's so the ID step and the booking gate can be seen.
+  let pendingSignup: { fullName: string; email: string; phone: string } | null = null;
+  let customerDocs: CustomerDocument[] = [];
 
   let walletBalance = -3750;
 
@@ -600,6 +608,32 @@ export function createDemoApi(opts: DemoOptions): Api {
       setSignedIn(true);
       return signInResult();
     },
+    async registerStart(input) {
+      await wait(700);
+      const phone = normalizeDemoPhone(input.phone);
+      if (!phone) throw new Error('Enter your mobile number after +63, e.g. 917 123 4567.');
+      if (input.password.length < 8) throw new Error('Use at least 8 characters.');
+      pendingSignup = { fullName: input.fullName.trim(), email: input.email.trim(), phone };
+      return { email: pendingSignup.email };
+    },
+    async registerVerify(_email, code) {
+      await wait(700);
+      if (!pendingSignup) throw new Error('Start again: we lost your sign-up.');
+      if (!/^\d{6}$/.test(code.trim())) throw new Error('Enter the 6-digit code.');
+      profile = {
+        ...profile,
+        full_name: pendingSignup.fullName,
+        phone: pendingSignup.phone,
+        verified_at: null,
+      };
+      customerDocs = [];
+      pendingSignup = null;
+      setSignedIn(true);
+      return signInResult();
+    },
+    async registerResend() {
+      await wait(400);
+    },
     async signOut() {
       setSignedIn(false);
     },
@@ -674,6 +708,9 @@ export function createDemoApi(opts: DemoOptions): Api {
   const jobsApi: Api['jobs'] = {
     async create(input: CreateJobInput) {
       await wait(700);
+      if (!profile.verified_at) {
+        throw new Error('Please finish verifying your ID before booking');
+      }
       if (jobs.some((j) => j.customer_id === CUSTOMER_ID && LIVE.includes(j.status))) {
         throw new Error('You already have a booking in progress');
       }
@@ -976,6 +1013,27 @@ export function createDemoApi(opts: DemoOptions): Api {
     },
   };
 
+  const customer: Api['customer'] = {
+    async documents() {
+      return customerDocs.map((d) => ({ ...d }));
+    },
+    async recordDocument(docType, storagePath) {
+      await wait(300);
+      customerDocs = customerDocs.filter((d) => d.doc_type !== docType);
+      customerDocs.push({
+        id: uid('cdoc'),
+        profile_id: userId,
+        doc_type: docType,
+        storage_path: storagePath,
+        created_at: new Date().toISOString(),
+      });
+      if (!profile.verified_at && customerDocs.length === 4) {
+        profile = { ...profile, verified_at: new Date().toISOString() };
+      }
+      return profile.verified_at;
+    },
+  };
+
   const notInDemo = async (): Promise<never> => {
     throw new Error('Not available in the demo build');
   };
@@ -1049,5 +1107,13 @@ export function createDemoApi(opts: DemoOptions): Api {
     dispatch,
     access,
     files,
+    customer,
   };
+}
+
+/** +63 and ten digits starting with 9, from whatever was typed. */
+function normalizeDemoPhone(input: string): string | null {
+  const digits = input.replace(/\D/g, '');
+  const national = digits.startsWith('63') ? digits.slice(2) : digits.replace(/^0/, '');
+  return /^9\d{9}$/.test(national) ? `+63${national}` : null;
 }

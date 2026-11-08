@@ -84,6 +84,7 @@ run_sql_file "dispatch assertions" "$here/01_dispatch_test.sql"
 run_sql_file "privilege assertions" "$here/02_privilege_test.sql"
 run_sql_file "rbac and rate-limit assertions" "$here/03_rbac_test.sql"
 run_sql_file "console action assertions" "$here/04_console_actions_test.sql"
+run_sql_file "customer verification assertions" "$here/05_customer_verification_test.sql"
 
 echo
 echo "==> all migrations applied and assertions passed"

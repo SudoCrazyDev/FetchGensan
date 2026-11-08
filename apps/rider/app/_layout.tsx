@@ -13,7 +13,7 @@ import { api } from '@/lib/supabase';
 configureNotifications();
 
 /** Screens a signed-out user may be on. */
-const AUTH_SCREENS = new Set(['sign-in', 'forgot-password']);
+const AUTH_SCREENS = new Set(['sign-in', 'forgot-password', 'register']);
 
 /**
  * Sends a signed-out user to the sign-in screen and a signed-in user out of
@@ -31,8 +31,13 @@ function AuthGate() {
 
   const inAuthFlow = AUTH_SCREENS.has(segments[0] ?? '');
   const inWelcome = segments[0] === 'welcome';
+  const inVerify = segments[0] === 'verify-id';
   // A first sign-in has a profile row with no name yet.
   const needsName = !!profile && profile.full_name.trim() === '';
+  // A self-registered customer who has not finished the ID photos. The
+  // database refuses their bookings either way; this just takes them to
+  // the screen that fixes it.
+  const needsId = !!profile && profile.role === 'customer' && !profile.verified_at;
 
   useEffect(() => {
     if (loading) return;
@@ -44,12 +49,24 @@ function AuthGate() {
 
     if (profileLoading) return;
 
-    if (needsName && !inWelcome) {
-      router.replace('/welcome');
-    } else if (!needsName && (inAuthFlow || inWelcome)) {
+    if (needsName) {
+      if (!inWelcome) router.replace('/welcome');
+    } else if (needsId) {
+      if (!inVerify) router.replace('/verify-id');
+    } else if (inAuthFlow || inWelcome || inVerify) {
       router.replace('/');
     }
-  }, [userId, loading, profileLoading, needsName, inAuthFlow, inWelcome, router]);
+  }, [
+    userId,
+    loading,
+    profileLoading,
+    needsName,
+    needsId,
+    inAuthFlow,
+    inWelcome,
+    inVerify,
+    router,
+  ]);
 
   return null;
 }
@@ -76,10 +93,18 @@ function Navigator() {
         <Stack.Screen name="sign-in" options={{ headerShown: false }} />
         <Stack.Screen name="welcome" options={{ headerShown: false }} />
         <Stack.Screen name="forgot-password" options={{ title: 'Forgot password' }} />
+        <Stack.Screen name="register" options={{ title: 'Sign up' }} />
         <Stack.Screen
-          name="book/[type]"
-          options={{ title: 'Book', presentation: 'card' }}
+          name="verify-id"
+          // No way back: there is nothing behind it but the sign-up form.
+          options={{
+            title: 'Sign up',
+            headerBackVisible: false,
+            headerLeft: () => null,
+            gestureEnabled: false,
+          }}
         />
+        <Stack.Screen name="book/[type]" options={{ title: 'Book', presentation: 'card' }} />
         <Stack.Screen name="job/[id]" options={{ title: 'Your booking' }} />
         <Stack.Screen name="history" options={{ title: 'Your bookings' }} />
         <Stack.Screen name="profile" options={{ title: 'Account' }} />

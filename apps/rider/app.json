@@ -52,7 +52,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "FetchGensan needs photo access so you can set a profile picture."
+          "cameraPermission": "FetchGensan uses your camera to photograph your ID and take a selfie when you sign up.",
+          "photosPermission": "FetchGensan needs photo access so you can upload your ID or set a profile picture."
         }
       ],
       "@maplibre/maplibre-react-native",
