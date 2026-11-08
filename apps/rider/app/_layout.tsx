@@ -4,10 +4,13 @@ import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import { ApiProvider, useSessionUser } from '@fetch/api/react';
+import { ApiProvider, useProfile, useSessionUser } from '@fetch/api/react';
 import { Loading, ThemeProvider, useTheme } from '@fetch/ui';
 
+import { configureNotifications, usePush } from '@/lib/push';
 import { api } from '@/lib/supabase';
+
+configureNotifications();
 
 /** Screens a signed-out user may be on. */
 const AUTH_SCREENS = new Set(['sign-in', 'forgot-password']);
@@ -20,20 +23,33 @@ const AUTH_SCREENS = new Set(['sign-in', 'forgot-password']);
  */
 function AuthGate() {
   const { userId, loading } = useSessionUser();
+  const { data: profile, isLoading: profileLoading } = useProfile();
   const segments = useSegments();
   const router = useRouter();
 
+  usePush();
+
   const inAuthFlow = AUTH_SCREENS.has(segments[0] ?? '');
+  const inWelcome = segments[0] === 'welcome';
+  // A first sign-in has a profile row with no name yet.
+  const needsName = !!profile && profile.full_name.trim() === '';
 
   useEffect(() => {
     if (loading) return;
 
-    if (!userId && !inAuthFlow) {
-      router.replace('/sign-in');
-    } else if (userId && inAuthFlow) {
+    if (!userId) {
+      if (!inAuthFlow) router.replace('/sign-in');
+      return;
+    }
+
+    if (profileLoading) return;
+
+    if (needsName && !inWelcome) {
+      router.replace('/welcome');
+    } else if (!needsName && (inAuthFlow || inWelcome)) {
       router.replace('/');
     }
-  }, [userId, loading, inAuthFlow, router]);
+  }, [userId, loading, profileLoading, needsName, inAuthFlow, inWelcome, router]);
 
   return null;
 }
@@ -58,6 +74,7 @@ function Navigator() {
       >
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="sign-in" options={{ headerShown: false }} />
+        <Stack.Screen name="welcome" options={{ headerShown: false }} />
         <Stack.Screen name="forgot-password" options={{ title: 'Forgot password' }} />
         <Stack.Screen
           name="book/[type]"

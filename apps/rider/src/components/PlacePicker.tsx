@@ -19,7 +19,7 @@ import { useMemo, useState } from 'react';
 import { FlatList, Modal, Pressable, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useLandmarkSearch, useSavedPlaces } from '@fetch/api/react';
+import { useApi, useLandmarkSearch, useSavePlace, useSavedPlaces } from '@fetch/api/react';
 import { GENSAN_REGION, type LatLng, formatDistance } from '@fetch/core';
 import { Button, Card, Divider, Field, Row, Stack, Txt, useTheme } from '@fetch/ui';
 
@@ -37,20 +37,44 @@ interface Props {
   /** Centres the map and orders landmark results by nearness. */
   near?: LatLng;
   initial?: PickedPlace | null;
+  /**
+   * Start with the pin on `near`. Right for a pick-up taken from a real GPS
+   * fix ("I'm here, by the blue gate"); wrong for a drop-off, where `near`
+   * is the pick-up and confirming it would book a ride to where you are.
+   */
+  startAtNear?: boolean;
   onCancel: () => void;
   onPick: (place: PickedPlace) => void;
 }
 
-export function PlacePicker({ visible, title, near, initial, onCancel, onPick }: Props) {
+export function PlacePicker({
+  visible,
+  title,
+  near,
+  initial,
+  startAtNear = false,
+  onCancel,
+  onPick,
+}: Props) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
 
   const [query, setQuery] = useState('');
-  const [pin, setPin] = useState<LatLng | null>(initial?.location ?? near ?? null);
-  const [label, setLabel] = useState(initial?.label ?? '');
+  const [pin, setPin] = useState<LatLng | null>(
+    initial?.location ?? (startAtNear ? (near ?? null) : null),
+  );
+  const [label, setLabel] = useState(
+    initial?.label ?? (startAtNear && near ? 'Your current location' : ''),
+  );
   const [landmark, setLandmark] = useState(initial?.landmark ?? '');
   const [mapOpen, setMapOpen] = useState(false);
+  // Which landmark row the pin came from, so its popularity can be bumped.
+  const [landmarkId, setLandmarkId] = useState<string | null>(null);
+  const [fromSaved, setFromSaved] = useState(false);
+  const [saveAs, setSaveAs] = useState('');
 
+  const api = useApi();
+  const savePlace = useSavePlace();
   const { data: saved } = useSavedPlaces();
   const { data: landmarks, isFetching } = useLandmarkSearch(query, near);
 
@@ -69,15 +93,29 @@ export function PlacePicker({ visible, title, near, initial, onCancel, onPick }:
   function reset() {
     setQuery('');
     setMapOpen(false);
+    setSaveAs('');
   }
 
   function confirm() {
     if (!pin) return;
-    onPick({
+    const picked = {
       location: pin,
       label: label.trim() || landmark.trim(),
       landmark: landmark.trim(),
-    });
+    };
+
+    // Both are best-effort and must never hold up the booking.
+    if (landmarkId) void api.places.bumpLandmark(landmarkId).catch(() => undefined);
+    if (saveAs.trim() && !fromSaved) {
+      savePlace.mutate({
+        label: saveAs.trim(),
+        landmarkNote: picked.landmark,
+        addressLine: picked.label,
+        location: pin,
+      });
+    }
+
+    onPick(picked);
     reset();
   }
 
@@ -112,7 +150,15 @@ export function PlacePicker({ visible, title, near, initial, onCancel, onPick }:
             <Txt size="small" tone="muted">
               Drag the map so the pin sits exactly where the rider should stop.
             </Txt>
-            <PinMap region={region} onPinChange={setPin} />
+            <PinMap
+              region={region}
+              onPinChange={(p) => {
+                setPin(p);
+                // A dragged pin is no longer the landmark it started from.
+                setLandmarkId(null);
+                setFromSaved(false);
+              }}
+            />
             <Button label="Use this spot" size="lg" onPress={() => setMapOpen(false)} />
           </Stack>
         ) : (
@@ -142,12 +188,11 @@ export function PlacePicker({ visible, title, near, initial, onCancel, onPick }:
                         <Pressable
                           key={place.id}
                           onPress={() => {
-                            setLabel(place.label);
+                            setPin({ latitude: place.lat, longitude: place.lng });
+                            setLabel(place.address_line || place.label);
                             setLandmark(place.landmark_note);
-                            // saved_places stores a geography; the list
-                            // query does not project lng/lat, so the pin
-                            // still needs confirming on the map.
-                            setMapOpen(true);
+                            setLandmarkId(null);
+                            setFromSaved(true);
                           }}
                           style={{ paddingVertical: t.space(3) }}
                         >
@@ -172,6 +217,8 @@ export function PlacePicker({ visible, title, near, initial, onCancel, onPick }:
                     onPress={() => {
                       setPin({ latitude: item.lat, longitude: item.lng });
                       setLabel(item.name);
+                      setLandmarkId(item.id);
+                      setFromSaved(false);
                       setQuery('');
                     }}
                     style={({ pressed }) => ({
@@ -223,6 +270,14 @@ export function PlacePicker({ visible, title, near, initial, onCancel, onPick }:
                     hint="This is what your rider reads when they arrive. Be specific."
                     multiline
                   />
+                  {!fromSaved ? (
+                    <Field
+                      label="Save this place as (optional)"
+                      value={saveAs}
+                      onChangeText={setSaveAs}
+                      placeholder="Home, Work, Lola's house"
+                    />
+                  ) : null}
                 </Stack>
               </Card>
             ) : null}
@@ -233,7 +288,13 @@ export function PlacePicker({ visible, title, near, initial, onCancel, onPick }:
                 <Button
                   label="Drop a pin"
                   variant="secondary"
-                  onPress={() => setMapOpen(true)}
+                  onPress={() => {
+                    // The map opens centred on `region`; if the customer
+                    // taps "Use this spot" without moving it, that centre is
+                    // the spot -- onRegionChangeComplete never fires.
+                    if (!pin) setPin({ latitude: region.latitude, longitude: region.longitude });
+                    setMapOpen(true);
+                  }}
                   style={{ flex: 1 }}
                 />
               ) : null}

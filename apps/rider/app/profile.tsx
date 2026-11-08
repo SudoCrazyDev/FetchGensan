@@ -1,9 +1,9 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Alert, Linking, ScrollView } from 'react-native';
+import { Alert, Linking, Pressable, ScrollView } from 'react-native';
 
 import { humanizeError } from '@fetch/api';
-import { useApi, useProfile, useSavedPlaces } from '@fetch/api/react';
+import { useApi, useProfile, useRemovePlace, useSavedPlaces } from '@fetch/api/react';
 import { formatPhPhone } from '@fetch/core';
 import {
   Button,
@@ -18,13 +18,14 @@ import {
   Txt,
 } from '@fetch/ui';
 
-const DISPATCH_PHONE = '+639170000004';
+import { DISPATCH_PHONE } from '@/lib/config';
 
 export default function ProfileScreen() {
   const api = useApi();
   const router = useRouter();
   const { data: profile, isLoading, refetch } = useProfile();
   const { data: saved } = useSavedPlaces();
+  const removePlace = useRemovePlace();
 
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
@@ -98,21 +99,41 @@ export default function ProfileScreen() {
                 saved.map((place, index) => (
                   <Stack key={place.id} gap={2}>
                     {index > 0 ? <Divider /> : null}
-                    <Stack gap={0.5}>
-                      <Txt size="small" weight="600">
-                        {place.label}
-                      </Txt>
-                      {place.landmark_note ? (
-                        <Txt size="small" tone="muted">
-                          {place.landmark_note}
+                    <Row justify="space-between" align="flex-start">
+                      <Stack gap={0.5} style={{ flex: 1 }}>
+                        <Txt size="small" weight="600">
+                          {place.label}
                         </Txt>
-                      ) : null}
-                    </Stack>
+                        {place.landmark_note ? (
+                          <Txt size="small" tone="muted">
+                            {place.landmark_note}
+                          </Txt>
+                        ) : null}
+                      </Stack>
+                      <Pressable
+                        hitSlop={10}
+                        accessibilityLabel={`Remove ${place.label}`}
+                        onPress={() =>
+                          Alert.alert(`Remove "${place.label}"?`, undefined, [
+                            { text: 'Keep', style: 'cancel' },
+                            {
+                              text: 'Remove',
+                              style: 'destructive',
+                              onPress: () => removePlace.mutate(place.id),
+                            },
+                          ])
+                        }
+                      >
+                        <Txt size="small" tone="danger">
+                          Remove
+                        </Txt>
+                      </Pressable>
+                    </Row>
                   </Stack>
                 ))
               ) : (
                 <Txt size="small" tone="muted">
-                  Places you save while booking will appear here.
+                  Type a name under "Save this place as" when you pick a spot, and it appears here.
                 </Txt>
               )}
             </Stack>

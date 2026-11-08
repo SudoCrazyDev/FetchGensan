@@ -12,10 +12,19 @@ import { Button, Card } from './ui';
 
 const NAV: { href: string; label: string; requires: PermissionKey }[] = [
   { href: '/', label: 'Dispatch board', requires: 'console.access' },
-  { href: '/drivers', label: 'Drivers', requires: 'console.access' },
+  { href: '/jobs', label: 'Bookings', requires: 'console.access' },
+  { href: '/drivers', label: 'Riders', requires: 'console.access' },
+  { href: '/customers', label: 'Customers', requires: 'console.access' },
+  { href: '/landmarks', label: 'Landmarks', requires: 'console.access' },
+  { href: '/fares', label: 'Fares', requires: 'console.access' },
+  { href: '/reports', label: 'Reports', requires: 'console.access' },
   { href: '/users', label: 'Users', requires: 'users.view' },
   { href: '/roles', label: 'Roles', requires: 'users.view' },
 ];
+
+function isActive(pathname: string, href: string) {
+  return href === '/' ? pathname === '/' : pathname === href || pathname.startsWith(`${href}/`);
+}
 
 /** Where to send someone after sign-in: the first page they can use. */
 export function homeFor(permissions: readonly string[]): string {
@@ -89,9 +98,9 @@ export function Shell({
               <Link
                 key={item.href}
                 href={item.href}
-                aria-current={pathname === item.href ? 'page' : undefined}
+                aria-current={isActive(pathname, item.href) ? 'page' : undefined}
                 className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition ${
-                  pathname === item.href
+                  isActive(pathname, item.href)
                     ? 'bg-raised text-ink'
                     : 'text-muted hover:bg-surface hover:text-ink'
                 }`}

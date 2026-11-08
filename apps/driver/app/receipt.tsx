@@ -9,13 +9,12 @@
  * priced at zero.
  */
 
-import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, Switch, View } from 'react-native';
 
 import { humanizeError } from '@fetch/api';
-import { useDriverActiveJob, useErrandItems, useSubmitReceipt } from '@fetch/api/react';
+import { useApi, useDriverActiveJob, useErrandItems, useSubmitReceipt } from '@fetch/api/react';
 import { formatPeso, pesos } from '@fetch/core';
 import {
   Button,
@@ -33,8 +32,8 @@ import {
   useTheme,
 } from '@fetch/ui';
 
-import { api } from '@/lib/supabase';
 import { errorFeedback, successFeedback } from '@/lib/alerts';
+import { captureAndUpload } from '@/lib/photo';
 
 interface LineState {
   price: string;
@@ -45,6 +44,7 @@ interface LineState {
 export default function ReceiptScreen() {
   const t = useTheme();
   const router = useRouter();
+  const api = useApi();
 
   const { data: job, isLoading } = useDriverActiveJob();
   const { data: items } = useErrandItems(job?.job_type === 'errand' ? job.id : null);
@@ -72,6 +72,11 @@ export default function ReceiptScreen() {
 
   const overBudget = job ? itemsTotal > job.items_budget_centavos : false;
 
+  // Every line marked out of stock. Sending that is how the customer finds
+  // out -- and a zero-cost receipt is the one case either side may cancel.
+  const nothingAvailable =
+    (items ?? []).length > 0 && (items ?? []).every((item) => !lineFor(item.id).available);
+
   const missingPrices = (items ?? []).filter((item) => {
     const line = lineFor(item.id);
     return line.available && (line.price.trim() === '' || Number(line.price) <= 0);
@@ -86,7 +91,7 @@ export default function ReceiptScreen() {
           title="No errand in progress"
           body="This screen is only for errands."
           actionLabel="Back"
-          onAction={() => router.replace('/')}
+          onAction={() => router.dismissTo('/')}
         />
       </Screen>
     );
@@ -98,34 +103,15 @@ export default function ReceiptScreen() {
    * beginning with this job's id.
    */
   async function attachPhoto() {
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert('Camera needed', 'Allow the camera so you can photograph the receipt.');
-      return;
-    }
-
-    const shot = await ImagePicker.launchCameraAsync({
-      quality: 0.6,
-      // Compressed hard on purpose: this is uploaded over prepaid mobile
-      // data, and a receipt only has to be legible.
-      allowsEditing: false,
-      base64: false,
-    });
-
-    const asset = shot.assets?.[0];
-    if (shot.canceled || !asset) return;
-
     setUploading(true);
     try {
-      const path = `${job!.id}/receipt-${Date.now()}.jpg`;
-      const blob = await fetch(asset.uri).then((r) => r.blob());
-
-      const { error } = await api.client.storage
-        .from('receipts')
-        .upload(path, blob, { contentType: 'image/jpeg', upsert: false });
-
-      if (error) throw error;
-
+      const path = await captureAndUpload(
+        api,
+        'receipts',
+        `${job!.id}/receipt-${Date.now()}.jpg`,
+        'the receipt',
+      );
+      if (!path) return;
       setReceiptPath(path);
       successFeedback();
     } catch (e) {
@@ -164,8 +150,11 @@ export default function ReceiptScreen() {
           successFeedback();
           Alert.alert(
             'Sent to the customer',
-            'They will approve the total, then you can deliver.',
-            [{ text: 'OK', onPress: () => router.replace('/job') }],
+            nothingAvailable
+              ? 'They will choose whether to cancel or send you for something else.'
+              : 'They will approve the total, then you can deliver.',
+            // back(), not replace('/job'): the job screen is already underneath.
+            [{ text: 'OK', onPress: () => router.back() }],
           );
         },
         onError: (e) => {
@@ -311,10 +300,14 @@ export default function ReceiptScreen() {
           </Card>
 
           <Button
-            label="Send to customer for approval"
+            label={
+              nothingAvailable
+                ? 'Tell the customer nothing was available'
+                : 'Send to customer for approval'
+            }
             size="lg"
             loading={submit.isPending}
-            disabled={itemsTotal === 0}
+            disabled={itemsTotal === 0 && !nothingAvailable}
             onPress={send}
           />
 

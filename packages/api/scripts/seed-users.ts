@@ -101,7 +101,7 @@ const USERS: SeedUser[] = [
 const STAFF_ROLES = new Set(['dispatcher', 'admin']);
 
 async function findByPhone(phone: string): Promise<string | null> {
-  // listUsers has no phone filter, so page through. Fine for four users.
+  // listUsers has no phone filter, so page through. Fine for a handful of users.
   let page = 1;
   for (;;) {
     const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });

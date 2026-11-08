@@ -7,7 +7,7 @@
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { createContext, createElement, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, createElement, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import type { Api } from '../api';
@@ -52,6 +52,21 @@ export interface ApiProviderProps {
 
 export function ApiProvider({ api, queryClient, children }: ApiProviderProps) {
   const [client] = useState(() => queryClient ?? makeQueryClient());
+
+  // Query keys are not per-user (['driver-me'], ['driver-wallet'], ...), so
+  // when the signed-in account changes -- sign-out, or a shared phone
+  // handed to another rider -- everything cached belongs to someone else.
+  // Without this the next account briefly saw the previous rider's wallet
+  // and driver row, and the onboarding gate read that stale row.
+  const lastUser = useRef<string | null | undefined>(undefined);
+  useEffect(
+    () =>
+      api.auth.onAuthStateChange((id) => {
+        if (lastUser.current !== undefined && lastUser.current !== id) client.clear();
+        lastUser.current = id;
+      }),
+    [api, client],
+  );
 
   return createElement(
     QueryClientProvider,

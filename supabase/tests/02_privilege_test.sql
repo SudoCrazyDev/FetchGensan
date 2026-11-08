@@ -37,6 +37,14 @@ begin
          'reap_stale_drivers',
          'prune_driver_locations',
          'prune_push_tokens',
+         -- push fan-out: fires HTTP requests with a secret from Vault
+         'send_push',
+         'push_on_offer',
+         'push_on_job_status',
+         'push_on_manual_assign',
+         -- internal guards for the admin RPCs
+         'require_staff',
+         'require_admin',
          'auth_rate_limit_hit',
          'auth_rate_limit_clear',
          'prune_auth_attempts',
@@ -130,6 +138,18 @@ begin
       'job_items_editable', 'is_active_job_counterparty',
       'job_receipt_uploadable', 'register_push_token',
       'unregister_push_token', 'generate_job_reference', 'bump_landmark',
+      -- called inside public_driver_info / driver_roster, which run their
+      -- functions as the caller
+      'driver_rating', 'can_accept_jobs', 'location_staleness_limit',
+      -- called by search_landmarks(), which runs as the caller
+      'point_of',
+      -- called by quote_fare(), which runs as the caller
+      'active_fare_config', 'is_night_hours',
+      -- 20261002000200: driver signup, errand review, contact
+      'register_driver', 'reject_errand_total', 'job_customer_contact',
+      -- the console. Each checks has_permission() inside.
+      'admin_review_document', 'admin_set_credit_floor', 'admin_wallet_adjustment',
+      'admin_update_fare', 'admin_upsert_landmark', 'admin_daily_stats',
       'has_permission', 'my_permissions', 'can_manage_user', 'role_is_mine',
       'list_users', 'list_roles', 'create_role', 'update_role', 'delete_role',
       'set_user_roles', 'set_user_blocked', 'update_user_profile',

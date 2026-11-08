@@ -306,6 +306,8 @@ export function createDemoApi(opts: DemoOptions): Api {
       landmark_note: 'Green gate beside the sari-sari store, Purok Malakas',
       address_line: 'Brgy. Lagao',
       use_count: 12,
+      lng: 125.1765,
+      lat: 6.1201,
     },
     {
       id: 'sp-work',
@@ -314,6 +316,8 @@ export function createDemoApi(opts: DemoOptions): Api {
       landmark_note: 'KCC Mall, staff entrance at the back',
       address_line: 'Brgy. Lagao',
       use_count: 7,
+      lng: 125.1783,
+      lat: 6.1155,
     },
   ];
 
@@ -383,6 +387,8 @@ export function createDemoApi(opts: DemoOptions): Api {
 
   const jobListeners = new Map<string, Set<(job: Job) => void>>();
   const myJobsListeners = new Set<(job: Job) => void>();
+  const assignedListeners = new Set<(job: Job) => void>();
+  const ratings = new Map<string, { stars: number; comment: string }>();
   const offerListeners = new Set<(offer: JobOffer) => void>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
 
@@ -405,6 +411,7 @@ export function createDemoApi(opts: DemoOptions): Api {
     const copy = { ...job };
     jobListeners.get(job.id)?.forEach((cb) => cb(copy));
     if (job.customer_id === CUSTOMER_ID) myJobsListeners.forEach((cb) => cb(copy));
+    if (job.driver_id === DRIVER_ID) assignedListeners.forEach((cb) => cb(copy));
     return copy;
   }
 
@@ -652,6 +659,8 @@ export function createDemoApi(opts: DemoOptions): Api {
         landmark_note: input.landmarkNote,
         address_line: input.addressLine ?? '',
         use_count: 0,
+        lng: input.location.longitude,
+        lat: input.location.latitude,
       };
       savedPlaces.push(place);
       return place;
@@ -773,8 +782,21 @@ export function createDemoApi(opts: DemoOptions): Api {
       update(job, { cancel_reason: reason || null, cancelled_by: userId });
       return setStatus(job, 'cancelled');
     },
-    async rate() {
+    async rejectErrandTotal(jobId) {
       await wait();
+      const job = findJob(jobId);
+      if (job.status !== 'awaiting_approval') throw new Error('Nothing to send back');
+      return setStatus(job, 'shopping');
+    },
+    async receipts() {
+      return [];
+    },
+    async rate(jobId, stars, comment) {
+      await wait();
+      ratings.set(jobId, { stars, comment: comment ?? '' });
+    },
+    async myRating(jobId) {
+      return ratings.get(jobId) ?? null;
     },
     async events() {
       return [];
@@ -803,10 +825,12 @@ export function createDemoApi(opts: DemoOptions): Api {
       await wait(500);
       // A real registration waits for dispatch to approve it. The demo
       // approves straight away so the rest of the app is reachable.
+      const { full_name, ...vehicle } = input;
+      profile = { ...profile, full_name };
       driver = {
         id: DRIVER_ID,
         status: 'approved',
-        ...input,
+        ...vehicle,
         is_online: false,
         rating_sum: 1018,
         rating_count: 212,
@@ -935,6 +959,15 @@ export function createDemoApi(opts: DemoOptions): Api {
         created_at: new Date().toISOString(),
       });
     },
+    async customerContact() {
+      return { full_name: 'Maria Santos', phone: '+639170000001' };
+    },
+    onAssignedJobChange(_driverId, cb) {
+      assignedListeners.add(cb);
+      return () => {
+        assignedListeners.delete(cb);
+      };
+    },
     onOffer(_driverId, cb) {
       offerListeners.add(cb);
       return () => {
@@ -957,9 +990,36 @@ export function createDemoApi(opts: DemoOptions): Api {
     assign: notInDemo,
     setDriverStatus: notInDemo,
     reviewDocument: notInDemo,
+    driverDetail: async () => null,
+    driverDocuments: async () => [],
+    signedUrl: notInDemo,
+    driverWallet: async () => [],
+    setCreditFloor: notInDemo,
+    walletAdjustment: notInDemo,
     recordTopup: notInDemo,
     cancel: notInDemo,
+    jobs: async () => [],
+    jobEvents: async () => [],
+    jobItems: async () => [],
+    jobReceipts: async () => [],
+    customers: async () => [],
+    fareHistory: async () => [],
+    updateFare: notInDemo,
+    landmarks: async () => [],
+    saveLandmark: notInDemo,
+    dailyStats: async () => [],
     onAnyJobChange: () => () => {},
+  };
+
+  const files: Api['files'] = {
+    async uploadFromUri(_bucket, path) {
+      await wait(600);
+      return path;
+    },
+    async signedUrl() {
+      // Nothing was really uploaded, so there is nothing to link to.
+      return '';
+    },
   };
 
   const access: Api['access'] = {
@@ -988,5 +1048,6 @@ export function createDemoApi(opts: DemoOptions): Api {
     driver: driverApi,
     dispatch,
     access,
+    files,
   };
 }

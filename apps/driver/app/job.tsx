@@ -1,13 +1,17 @@
 import { useRouter } from 'expo-router';
-import { Alert, Linking, Platform, Pressable, ScrollView, View } from 'react-native';
+import { useQueryClient } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { Alert, Linking, Platform, ScrollView } from 'react-native';
 
 import { humanizeError } from '@fetch/api';
 import {
   useAdvanceJob,
   useCancelJob,
   useCompleteJob,
+  useCustomerContact,
   useDriverActiveJob,
   useErrandItems,
+  qk,
   useJob,
 } from '@fetch/api/react';
 import {
@@ -17,6 +21,7 @@ import {
   driverNextStatus,
   formatDistance,
   formatPeso,
+  formatPhPhone,
 } from '@fetch/core';
 import {
   Badge,
@@ -35,6 +40,7 @@ import {
 } from '@fetch/ui';
 
 import { errorFeedback, successFeedback, tapFeedback } from '@/lib/alerts';
+import { DISPATCH_PHONE } from '@/lib/config';
 
 /**
  * Hands the leg off to the phone's own navigation app.
@@ -63,8 +69,30 @@ export default function DriverJobScreen() {
   const router = useRouter();
 
   const { data: activeJob, isLoading } = useDriverActiveJob();
-  const { data: job } = useJob(activeJob?.id);
+
+  // Remember the job after it stops being "active", so a cancellation by
+  // the customer or dispatch shows as a cancellation -- with the reason --
+  // instead of the screen silently going blank on the next poll.
+  const [jobId, setJobId] = useState<string | null>(null);
+  useEffect(() => {
+    if (activeJob?.id) setJobId(activeJob.id);
+  }, [activeJob?.id]);
+
+  // useJob() relies on realtime, which a budget phone drops. When the poll
+  // says the job is no longer ours, ask for it again so a cancellation or
+  // completion shows as such instead of a live-looking screen whose every
+  // button fails.
+  const queryClient = useQueryClient();
+  const noLongerActive = !isLoading && !activeJob && !!jobId;
+  useEffect(() => {
+    if (noLongerActive) void queryClient.invalidateQueries({ queryKey: qk.job(jobId!) });
+  }, [noLongerActive, jobId, queryClient]);
+
+  const { data: job } = useJob(activeJob?.id ?? jobId);
   const current = job ?? activeJob;
+  const { data: contact } = useCustomerContact(
+    current && current.status !== 'cancelled' && current.status !== 'completed' ? current.id : null,
+  );
 
   const { data: items } = useErrandItems(
     current?.job_type === 'errand' ? current.id : null,
@@ -76,14 +104,31 @@ export default function DriverJobScreen() {
 
   if (isLoading) return <Loading />;
 
-  if (!current) {
+  if (current?.status === 'cancelled') {
+    return (
+      <Screen>
+        <EmptyState
+          title="This booking was cancelled"
+          body={
+            current.cancel_reason
+              ? `${current.reference}: ${current.cancel_reason}`
+              : `${current.reference} was cancelled. You are free for the next one.`
+          }
+          actionLabel="Back to bookings"
+          onAction={() => router.dismissTo('/')}
+        />
+      </Screen>
+    );
+  }
+
+  if (!current || current.status === 'completed') {
     return (
       <Screen>
         <EmptyState
           title="No booking in progress"
           body="Head back and wait for the next one."
           actionLabel="Back"
-          onAction={() => router.replace('/')}
+          onAction={() => router.dismissTo('/')}
         />
       </Screen>
     );
@@ -125,16 +170,12 @@ export default function DriverJobScreen() {
     }
 
     if (current!.status === 'in_progress') {
-      complete.mutate(current!.id, {
+      const completing = current!;
+      complete.mutate(completing.id, {
         onSuccess: () => {
           successFeedback();
-          Alert.alert(
-            'Booking complete',
-            current!.payment_method === 'cash'
-              ? `Collect ${formatPeso(current!.final_total_centavos)} in cash.`
-              : 'Payment already settled.',
-            [{ text: 'Done', onPress: () => router.replace('/') }],
-          );
+          // The rate screen also shows how much cash to collect.
+          router.replace({ pathname: '/rate', params: { jobId: completing.id } });
         },
         onError: (e) => {
           errorFeedback();
@@ -158,6 +199,13 @@ export default function DriverJobScreen() {
   }
 
   const busy = advance.isPending || complete.isPending;
+
+  // Mirrors cancel_job(): once shopping starts the rider is holding goods
+  // they paid for, and only dispatch can cancel -- unless nothing was in
+  // stock and the receipt came to zero.
+  const canCancel =
+    !['shopping', 'awaiting_approval'].includes(current.status) ||
+    (current.status === 'awaiting_approval' && current.items_cost_centavos === 0);
 
   return (
     <Screen edges={['bottom']}>
@@ -230,6 +278,40 @@ export default function DriverJobScreen() {
               ) : null}
             </Stack>
           </Card>
+
+          {/* ---------------------------------------------- customer */}
+
+          {contact ? (
+            <Card>
+              <Stack gap={3}>
+                <Row justify="space-between">
+                  <Stack gap={0.5} style={{ flex: 1 }}>
+                    <Txt size="caption" tone="muted" weight="600">
+                      CUSTOMER
+                    </Txt>
+                    <Txt weight="700">{contact.full_name || 'Customer'}</Txt>
+                    <Txt size="small" tone="muted">
+                      {formatPhPhone(contact.phone)}
+                    </Txt>
+                  </Stack>
+                </Row>
+                <Row gap={2}>
+                  <Button
+                    label="Call"
+                    variant="secondary"
+                    style={{ flex: 1 }}
+                    onPress={() => void Linking.openURL(`tel:${contact.phone}`)}
+                  />
+                  <Button
+                    label="Text"
+                    variant="secondary"
+                    style={{ flex: 1 }}
+                    onPress={() => void Linking.openURL(`sms:${contact.phone}`)}
+                  />
+                </Row>
+              </Stack>
+            </Card>
+          ) : null}
 
           {/* ---------------------------------------------- navigation */}
 
@@ -346,25 +428,36 @@ export default function DriverJobScreen() {
             label="I have a problem with this booking"
             variant="danger"
             onPress={() =>
-              Alert.alert('Report a problem', 'What do you need?', [
-                { text: 'Never mind', style: 'cancel' },
-                {
-                  text: 'Call dispatch',
-                  onPress: () => void Linking.openURL('tel:+639170000004'),
-                },
-                {
-                  text: 'Cancel booking',
-                  style: 'destructive',
-                  onPress: () =>
-                    cancel.mutate(
-                      { jobId: current.id, reason: 'Cancelled by driver' },
-                      {
-                        onSuccess: () => router.replace('/'),
-                        onError: (e) => Alert.alert('Could not cancel', humanizeError(e)),
-                      },
-                    ),
-                },
-              ])
+              Alert.alert(
+                'Report a problem',
+                canCancel
+                  ? 'What do you need?'
+                  : 'You have already paid for the items, so only dispatch can cancel this one.',
+                [
+                  { text: 'Never mind', style: 'cancel' },
+                  {
+                    text: 'Call dispatch',
+                    onPress: () => void Linking.openURL(`tel:${DISPATCH_PHONE}`),
+                  },
+                  ...(canCancel
+                    ? [
+                        {
+                          text: 'Cancel booking',
+                          style: 'destructive' as const,
+                          onPress: () =>
+                            cancel.mutate(
+                              { jobId: current.id, reason: 'Cancelled by rider' },
+                              {
+                                onSuccess: () => router.dismissTo('/'),
+                                onError: (e) =>
+                                  Alert.alert('Could not cancel', humanizeError(e)),
+                              },
+                            ),
+                        },
+                      ]
+                    : []),
+                ],
+              )
             }
           />
 

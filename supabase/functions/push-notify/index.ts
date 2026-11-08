@@ -28,10 +28,17 @@ const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 interface OfferPayload {
   /** `job_offers.id` */
   offer_id?: string;
+  /**
+   * The recipient's profile id. Named driver_id for history; since
+   * 20261002000200 customers register tokens too and receive booking
+   * updates through the same function.
+   */
   driver_id: string;
   job_id: string;
   title?: string;
   body?: string;
+  /** 'offer' (default), 'assigned', 'cancelled', or 'job' for a customer update. */
+  kind?: string;
 }
 
 function secretMatches(provided: string): boolean {
@@ -94,6 +101,9 @@ Deno.serve(async (req: Request) => {
     });
   }
 
+  const kind = payload.kind ?? 'offer';
+  const isOffer = kind === 'offer';
+
   const messages = tokens.map((row: { token: string }) => ({
     to: row.token,
     title: payload.title ?? 'New booking nearby',
@@ -102,11 +112,12 @@ Deno.serve(async (req: Request) => {
     // MAX priority and the dedicated channel, or Android will not heads-up
     // the notification and the offer expires unseen.
     priority: 'high',
-    channelId: 'offers',
+    channelId: isOffer ? 'offers' : 'default',
     // Offers expire in 25 seconds. A notification delivered after that is
     // worse than none -- it sends the driver to a job someone else took.
-    ttl: 25,
-    data: { jobId: payload.job_id, offerId: payload.offer_id ?? null },
+    // A booking update ("your rider is here") stays useful for a while.
+    ttl: isOffer ? 25 : 3600,
+    data: { jobId: payload.job_id, offerId: payload.offer_id ?? null, kind },
   }));
 
   const response = await fetch(EXPO_PUSH_URL, {

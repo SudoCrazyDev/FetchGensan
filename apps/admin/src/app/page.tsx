@@ -1,10 +1,12 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
 
 import { humanizeError } from '@fetch/api';
 import type { DispatchBoardRow } from '@fetch/api';
-import { useApi, useDispatchBoard, useRedispatch } from '@fetch/api/react';
+import { useAdminCancelJob, useAssignJob, useNearbyDrivers } from '@fetch/api/admin';
+import { useDispatchBoard, useRedispatch, useRoster } from '@fetch/api/react';
 import {
   JOB_TYPE_LABELS,
   formatDistance,
@@ -14,7 +16,7 @@ import {
 
 import { DispatchMap } from '@/components/DispatchMap';
 import { Shell } from '@/components/Shell';
-import { Badge, Button, Card, Stat } from '@/components/ui';
+import { Badge, Button, Card, PromptDialog, Stat, inputClass } from '@/components/ui';
 
 /**
  * How long a booking may sit unassigned before the row starts shouting.
@@ -40,6 +42,77 @@ function statusTone(status: string) {
   return 'progress' as const;
 }
 
+/**
+ * Manual assignment. Nearby dispatchable riders first -- the ones the
+ * automatic broadcast would have reached -- then every other approved rider
+ * who is free, because the usual reason to assign by hand is that the
+ * dispatcher has just phoned someone who is not showing as online.
+ */
+function AssignPanel({ job }: { job: DispatchBoardRow }) {
+  const { data: nearby } = useNearbyDrivers(job.id, 7000);
+  const { data: roster } = useRoster();
+  const assign = useAssignJob();
+  const [driverId, setDriverId] = useState('');
+
+  const free = (roster ?? []).filter(
+    (d) => d.status === 'approved' && !d.active_job_id && !d.is_blocked,
+  );
+  const nearbyIds = new Set((nearby ?? []).map((n) => n.driver_id));
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-line bg-bg/40 p-3">
+      <div className="text-[11px] font-bold uppercase tracking-wide text-muted">
+        Assign a rider by hand
+      </div>
+      {(nearby ?? []).length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {(nearby ?? []).map((n) => (
+            <Button
+              key={n.driver_id}
+              variant="secondary"
+              disabled={assign.isPending}
+              onClick={() => assign.mutate({ jobId: job.id, driverId: n.driver_id })}
+            >
+              {n.full_name || 'Unnamed'} · {formatDistance(n.distance_m)}
+              {n.rating !== null ? ` · ★${Number(n.rating).toFixed(1)}` : ''}
+            </Button>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted">No dispatchable rider within 7 km right now.</p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <select
+          className={`${inputClass} max-w-xs`}
+          value={driverId}
+          onChange={(e) => setDriverId(e.target.value)}
+        >
+          <option value="">Any free approved rider…</option>
+          {free
+            .filter((d) => !nearbyIds.has(d.id))
+            .map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.full_name || d.phone} · {d.plate_number} {d.is_online ? '· online' : '· offline'}
+              </option>
+            ))}
+        </select>
+        <Button
+          disabled={!driverId || assign.isPending}
+          onClick={() =>
+            assign.mutate(
+              { jobId: job.id, driverId },
+              { onSuccess: () => setDriverId('') },
+            )
+          }
+        >
+          Assign
+        </Button>
+      </div>
+      {assign.error ? <p className="text-xs text-bad">{humanizeError(assign.error)}</p> : null}
+    </div>
+  );
+}
+
 function JobRow({
   job,
   selected,
@@ -49,27 +122,13 @@ function JobRow({
   selected: boolean;
   onSelect: () => void;
 }) {
-  const api = useApi();
   const redispatch = useRedispatch();
-  const [busy, setBusy] = useState(false);
+  const cancelJob = useAdminCancelJob();
+  const [cancelOpen, setCancelOpen] = useState(false);
 
   const unassigned = job.driver_id === null;
   const urgent = unassigned && job.age_seconds > URGENT_AFTER_SECONDS;
   const warn = unassigned && job.age_seconds > WARN_AFTER_SECONDS;
-
-  async function cancel() {
-    const reason = window.prompt('Reason for cancelling?');
-    if (reason === null) return;
-
-    setBusy(true);
-    try {
-      await api.dispatch.cancel(job.id, reason || 'Cancelled by dispatch');
-    } catch (e) {
-      window.alert(humanizeError(e));
-    } finally {
-      setBusy(false);
-    }
-  }
 
   return (
     <Card
@@ -161,7 +220,11 @@ function JobRow({
       </div>
 
       {selected ? (
-        <div className="mt-3 flex flex-wrap gap-2 border-t border-line pt-3">
+        <div className="mt-3 flex flex-col gap-3 border-t border-line pt-3">
+          {job.driver_id === null && ['searching', 'expired', 'draft'].includes(job.status) ? (
+            <AssignPanel job={job} />
+          ) : null}
+        <div className="flex flex-wrap gap-2">
           {(job.status === 'searching' || job.status === 'expired') && (
             <>
               <Button
@@ -180,11 +243,38 @@ function JobRow({
               </Button>
             </>
           )}
-          <Button variant="danger" disabled={busy} onClick={() => void cancel()}>
+          <Link
+            href={`/jobs/${job.id}`}
+            className="rounded-lg border border-line bg-raised px-3 py-2 text-sm font-semibold hover:bg-line"
+          >
+            Open details
+          </Link>
+          <Button variant="danger" disabled={cancelJob.isPending} onClick={() => setCancelOpen(true)}>
             Cancel booking
           </Button>
         </div>
+        </div>
       ) : null}
+
+      <PromptDialog
+        open={cancelOpen}
+        title={`Cancel ${job.reference}?`}
+        description="The customer and any assigned rider are told it was cancelled."
+        label="Reason"
+        placeholder="Customer asked by phone"
+        confirmLabel="Cancel booking"
+        danger
+        required
+        busy={cancelJob.isPending}
+        error={cancelJob.error ? humanizeError(cancelJob.error) : null}
+        onCancel={() => setCancelOpen(false)}
+        onConfirm={(reason) =>
+          cancelJob.mutate(
+            { jobId: job.id, reason: reason.trim() },
+            { onSuccess: () => setCancelOpen(false) },
+          )
+        }
+      />
     </Card>
   );
 }

@@ -49,6 +49,8 @@ That gives you:
 | `0917 000 0003` | | driver | Pending — use this to test the approval gate |
 | `0917 000 0004` | `ops@fetchgensan.test` | Dispatcher | Signs in to the console |
 | `0917 000 0005` | `admin@fetchgensan.test` | Admin | Manages users and roles |
+| `0917 000 0006` | | — | Not seeded: walk a brand-new customer signup |
+| `0917 000 0007` | | — | Not seeded: walk a brand-new rider signup |
 
 Every account's password is `fetchgensan-dev`. Password-reset codes texted to
 these numbers are always `123456` on the local stack; reset emails land in
@@ -233,11 +235,49 @@ mostly returns nothing useful for it. Customers pick from saved places and the
 `landmark_suggestions` table, or drop a pin, and always add a free-text
 landmark note. That note is what the driver actually reads on arrival.
 
+## The dispatch console
+
+`pnpm admin`, sign in with a dispatcher or admin number. Pages:
+
+| Page | What it is for |
+|---|---|
+| Dispatch board | Live bookings; re-broadcast, widen, **assign a rider by hand**, cancel |
+| Bookings | Every booking, searchable by reference, name, phone or plate; per-booking timeline, receipt photos, and an override to move a job on when a rider's phone dies |
+| Riders | Approve / reject / suspend, review document photos, cash top-ups, ledger; admins also post adjustments and set credit limits |
+| Customers | Search, block with a dated note, change roles (admin) |
+| Landmarks | Add, move and hide landmarks -- paste a Google Maps pin or link |
+| Fares | Per-service pricing with a live price preview; admin-only to change, history kept |
+| Reports | Daily trips, gross, commission, and bookings nobody took |
+
+Every staff action is a `SECURITY DEFINER` RPC that checks a permission
+itself with `require_permission()`. Which page needs what: the board,
+bookings, customers, landmarks and reports need `console.access`; approving
+riders `drivers.manage`; top-ups `wallet.topup`; adjustments and credit
+limits `wallet.adjust`; fares `pricing.manage`; Users and Roles their own
+permissions. The built-in Admin role holds all of them.
+
 ## Checks
 
 ```bash
 pnpm test        # packages/core -- fare maths, state machine, money, geo, phone
 pnpm typecheck   # every package and app
+pnpm test:e2e    # every flow over the real API as real users (local stack)
+```
+
+`pnpm test:e2e` signs in as each seeded account and drives the whole
+business through `createApi` -- rider signup and document review, a ride, an
+errand with a rejected-then-approved receipt, an out-of-stock errand,
+manual assignment, blocking, pricing, landmarks, saved places, roles. Unlike
+the SQL suite it goes through RLS, which is how it found that the function
+lockdown had broken the customer's "your rider" card, the Riders page,
+landmark search with a location, and the server fare quote. It needs the
+local stack up and seeded, and refuses to run anywhere else.
+
+Two more scripts for poking at the apps by hand:
+
+```bash
+pnpm --filter @fetch/api demo:data   # a waiting booking + a document to review
+pnpm --filter @fetch/api rider:bot   # a pretend rider that accepts and walks the next job
 ```
 
 `job-state.test.ts` parses `allowed_job_transitions()` out of the SQL migration
@@ -271,6 +311,9 @@ Migrations are ordered and each one is self-contained:
 | `…0930000200_auth_rate_limit` | `auth_attempts` and the sliding-window limiter |
 | `…0930000300_console_driver_actions` | `set_driver_status()`, `assign_job()` for the console |
 | `…0930000400_fix_landmark_search` | Lets `search_landmarks()` call `point_of()` again |
+| `…1002000100_admin_console` | Staff RPCs (approve, assign, block, fares, landmarks, wallet), `admin_*` views |
+| `…1002000200_app_flow_fixes` | `register_driver()`, receipt reject/zero-cost cancel, push triggers, grants views need |
+| `…1003000100_reconcile_rbac` | Puts the console RPCs on `has_permission()`, adds `wallet.adjust`, merges the duplicate assign/status RPCs |
 
 ## Before you launch
 
@@ -327,6 +370,21 @@ bite if skipped.
   admin. On a fresh project, create the account, then run once in the SQL
   editor: `insert into user_roles (user_id, role_id) select '<their uuid>',
   id from roles where key = 'admin';`
+- **Turn on push notifications.** Nothing reaches a phone that is locked
+  until all of this is done:
+  1. `eas init` in `apps/driver` and `apps/rider`; put each project id in that
+     app's `.env` as `EAS_PROJECT_ID` (read by `app.config.ts`).
+  2. Deploy `supabase/functions/push-notify` and set its `PUSH_NOTIFY_SECRET`.
+  3. Store the URL and the same secret in Vault so the database triggers can
+     call it:
+     ```sql
+     select vault.create_secret('https://<ref>.supabase.co/functions/v1/push-notify', 'push_notify_url');
+     select vault.create_secret('<PUSH_NOTIFY_SECRET>', 'push_notify_secret');
+     ```
+  Until the Vault secrets exist the triggers do nothing (and never fail a
+  booking).
+- **Set `EXPO_PUBLIC_DISPATCH_PHONE`** in both apps. Every "Call dispatch"
+  button dials it; the fallback is the seeded test number, which rings nobody.
 - **Set `DISPATCH_TICK_SECRET`** if you use the `dispatch-tick` edge function
   instead of pg_cron. It fails closed without one, so dispatch retries would
   quietly stop.
