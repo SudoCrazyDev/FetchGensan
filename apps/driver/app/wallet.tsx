@@ -188,10 +188,16 @@ export default function WalletScreen() {
                     {formatPeso((week?.grossCentavos ?? 0) - (week?.commissionCentavos ?? 0))}
                   </Txt>
                 </Row>
+                {/*
+                  Errands are switched off in the rider app for now. Bring this
+                  note back with them: it explains why fronted item money is
+                  not counted as earnings.
+
                 <Txt size="caption" tone="muted">
                   Earnings exclude money you fronted for errand items — that is reimbursed to you
                   in full by the customer, and we take no commission on it.
                 </Txt>
+                */}
               </Stack>
             </Stack>
           </Card>

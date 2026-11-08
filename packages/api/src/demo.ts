@@ -469,7 +469,9 @@ export function createDemoApi(opts: DemoOptions): Api {
   }
 
   function makeOffer(): JobOffer & { job: Job } {
-    const kinds: JobType[] = ['ride', 'delivery', 'errand'];
+    // Rides only while the rider app hides errands and deliveries. Add
+    // 'delivery' and 'errand' back here when they return.
+    const kinds: JobType[] = ['ride'];
     const jobType = kinds[(seq + 1) % kinds.length]!;
     const pairs: [string, string][] = [
       ['lm-01', 'lm-11'],
