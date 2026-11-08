@@ -326,17 +326,17 @@ export function createDemoApi(opts: DemoOptions): Api {
       createdMinutesAgo: 60 * 26,
       driverId: DRIVER_ID,
     }),
+    // Rides only: the rider app currently hides errands and deliveries.
     makeJob({
-      jobType: 'errand',
+      jobType: 'ride',
       status: 'completed',
       from: { label: lm('lm-06').name, lng: lm('lm-06').lng, lat: lm('lm-06').lat },
       to: { label: 'Home', lng: 125.1765, lat: 6.1201 },
       createdMinutesAgo: 60 * 24 * 3,
       driverId: DRIVER_ID,
-      itemsCostCentavos: 48550,
     }),
     makeJob({
-      jobType: 'delivery',
+      jobType: 'ride',
       status: 'cancelled',
       from: { label: 'Home', lng: 125.1765, lat: 6.1201 },
       to: { label: lm('lm-10').name, lng: lm('lm-10').lng, lat: lm('lm-10').lat },

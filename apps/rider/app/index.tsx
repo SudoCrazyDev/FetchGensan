@@ -9,41 +9,42 @@ import {
   formatPeso,
   isLive,
 } from '@fetch/core';
-import {
-  Badge,
-  Card,
-  Row,
-  Screen,
-  Spacer,
-  Stack,
-  Txt,
-  statusTone,
-  useTheme,
-} from '@fetch/ui';
+import { Badge, Card, Row, Screen, Spacer, Stack, Txt, statusTone, useTheme } from '@fetch/ui';
 
+/**
+ * What the home screen offers. `enabled: false` hides a service from the
+ * home screen only: its booking screen, the server and the driver app all
+ * still handle it, so turning it back on is this one flag.
+ */
 const SERVICES: {
   type: JobType;
   emoji: string;
   title: string;
   blurb: string;
+  enabled: boolean;
 }[] = [
   {
     type: 'ride',
     emoji: '🛵',
     title: 'Book a ride',
     blurb: 'Door-to-door habal-habal for work, school or a night out.',
+    enabled: true,
   },
   {
     type: 'errand',
     emoji: '🛍️',
     title: 'Send us on an errand',
     blurb: 'Food buys, groceries, pharmacy. We shop, you approve the receipt.',
+    // Hidden for now.
+    enabled: false,
   },
   {
     type: 'delivery',
     emoji: '📦',
     title: 'Send a package',
     blurb: 'Documents and parcels across the city, fast.',
+    // Hidden for now.
+    enabled: false,
   },
 ];
 
@@ -146,7 +147,7 @@ export default function Home() {
           ) : null}
 
           <Stack gap={3}>
-            {SERVICES.map((service) => (
+            {SERVICES.filter((service) => service.enabled).map((service) => (
               <Pressable
                 key={service.type}
                 disabled={hasActive}
