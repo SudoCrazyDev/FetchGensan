@@ -76,8 +76,9 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ApiProvider api={api}>
-          <ThemeProvider>
-            <StatusBar style="auto" />
+          {/* Pinned light rather than following the phone's dark mode. */}
+          <ThemeProvider scheme="light">
+            <StatusBar style="dark" />
             <Navigator />
           </ThemeProvider>
         </ApiProvider>

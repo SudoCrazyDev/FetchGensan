@@ -95,12 +95,13 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <ApiProvider api={api}>
           {/*
-            Pinned dark, not 'system'. A driver is looking at this on a
-            handlebar mount at 2am; a white screen wrecks night vision and
-            they have no free hand to change a setting.
+            Pinned light, not 'system', so every driver sees the same
+            screens. It used to be pinned dark for night riding; if drivers
+            find white too bright at 2am, 'dark' is a one-word change here
+            and in app.json.
           */}
-          <ThemeProvider scheme="dark">
-            <StatusBar style="light" />
+          <ThemeProvider scheme="light">
+            <StatusBar style="dark" />
             <Navigator />
           </ThemeProvider>
         </ApiProvider>

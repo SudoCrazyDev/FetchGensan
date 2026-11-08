@@ -9,9 +9,8 @@ const ThemeContext = createContext<Theme>(lightTheme);
 export interface ThemeProviderProps {
   children: ReactNode;
   /**
-   * Force a scheme. The driver app pins this to 'dark': a white screen on a
-   * handlebar mount at 2am wrecks night vision, and the driver has no spare
-   * hand to change a setting mid-shift.
+   * Force a scheme. Both mobile apps currently pin 'light'; 'system'
+   * follows the phone's dark mode setting.
    */
   scheme?: 'light' | 'dark' | 'system';
 }
