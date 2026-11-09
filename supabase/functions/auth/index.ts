@@ -174,6 +174,17 @@ async function login(req: Request): Promise<Response> {
     throw new HttpError(403, DEACTIVATED, 'account_disabled');
   }
 
+  // A sign-up confirmed by email link rather than by code still has its
+  // phone waiting; finish that now. A clash is not worth failing sign-in
+  // over: they are in with their email, and can sort the number out later.
+  if (data.session.user.email) {
+    try {
+      await attachPendingPhone(data.session, data.session.user.email);
+    } catch (e) {
+      console.info('pending phone not attached at login', (e as Error).message);
+    }
+  }
+
   await clear(admin, LIMITS.loginAccount, id.value);
   return sessionResponse(data.session);
 }
@@ -465,6 +476,44 @@ async function registerResend(req: Request): Promise<Response> {
   return json({ ok: true, message: 'If that sign-up is waiting, we have sent a new code.' }, 202);
 }
 
+/**
+ * Attaches the phone held back at register/start, once the email is
+ * proven. Called by register/verify, and by login for an account whose
+ * email was confirmed some other way -- the default "Confirm signup"
+ * template sends a link, and clicking it confirms the email without ever
+ * reaching register/verify. Updates the session's user in place.
+ */
+async function attachPendingPhone(session: Session, email: string): Promise<void> {
+  const user = session.user;
+  const meta = (user.app_metadata ?? {}) as { pending_phone?: string | null };
+  const phone = meta.pending_phone;
+  if (!phone || !user.email_confirmed_at) return;
+
+  // Someone may have taken the number in the meantime.
+  const found = await lookup(email, phone);
+  if (found.phone_owner_id && found.phone_owner_id !== user.id) {
+    throw new HttpError(409, PHONE_TAKEN, 'phone_taken');
+  }
+
+  const { data: updated, error: updateError } = await admin.auth.admin.updateUserById(user.id, {
+    phone,
+    phone_confirm: true,
+    app_metadata: { self_registered: true, pending_phone: null },
+  });
+  if (updateError) {
+    const c = (updateError as { code?: string }).code ?? '';
+    if (c === 'phone_exists') throw new HttpError(409, PHONE_TAKEN, 'phone_taken');
+    throw updateError;
+  }
+  // handle_new_user() filed the email as the profile's phone; put the
+  // real number there now, in the +63 form the rest of the app uses.
+  const { error: profileError } = await admin.from('profiles').update({ phone }).eq('id', user.id);
+  if (profileError) throw profileError;
+
+  // The session was issued a moment before the phone was attached.
+  if (updated?.user) session.user = updated.user;
+}
+
 async function registerVerify(req: Request): Promise<Response> {
   const body = await readJson<{ email: string; code: string }>(req);
   const email = requireEmail(body.email);
@@ -483,38 +532,7 @@ async function registerVerify(req: Request): Promise<Response> {
     );
   }
 
-  const user = data.user;
-  const meta = (user.app_metadata ?? {}) as { self_registered?: boolean; pending_phone?: string };
-  const phone = meta.pending_phone;
-
-  if (phone) {
-    // Someone may have taken the number between start and now.
-    const found = await lookup(email, phone);
-    if (found.phone_owner_id && found.phone_owner_id !== user.id) {
-      throw new HttpError(409, PHONE_TAKEN, 'phone_taken');
-    }
-
-    const { data: updated, error: updateError } = await admin.auth.admin.updateUserById(user.id, {
-      phone,
-      phone_confirm: true,
-      app_metadata: { self_registered: true, pending_phone: null },
-    });
-    if (updateError) {
-      const c = (updateError as { code?: string }).code ?? '';
-      if (c === 'phone_exists') throw new HttpError(409, PHONE_TAKEN, 'phone_taken');
-      throw updateError;
-    }
-    // handle_new_user() filed the email as the profile's phone; put the
-    // real number there now, in the +63 form the rest of the app uses.
-    const { error: profileError } = await admin
-      .from('profiles')
-      .update({ phone })
-      .eq('id', user.id);
-    if (profileError) throw profileError;
-
-    // The session was issued a moment before the phone was attached.
-    if (updated?.user) data.session.user = updated.user;
-  }
+  await attachPendingPhone(data.session, email);
 
   await clear(admin, LIMITS.verifyAccount, email);
   await clear(admin, LIMITS.registerAccount, email);
