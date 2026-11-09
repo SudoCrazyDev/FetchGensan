@@ -100,7 +100,7 @@ export function PlacePicker({
     if (!pin) return;
     const picked = {
       location: pin,
-      label: label.trim() || landmark.trim(),
+      label: label.trim() || landmark.trim() || 'Pinned spot',
       landmark: landmark.trim(),
     };
 
@@ -153,13 +153,33 @@ export function PlacePicker({
             <PinMap
               region={region}
               onPinChange={(p) => {
+                // The map also reports its opening centre on load; only a
+                // real move should relabel the place.
+                const moved =
+                  !pin ||
+                  Math.abs(p.latitude - pin.latitude) > 1e-6 ||
+                  Math.abs(p.longitude - pin.longitude) > 1e-6;
                 setPin(p);
-                // A dragged pin is no longer the landmark it started from.
+                if (!moved) return;
+                // A dragged pin is no longer the landmark, saved place or
+                // "current location" it started from, so stop calling it that.
                 setLandmarkId(null);
                 setFromSaved(false);
+                setLabel('Pinned spot');
               }}
             />
-            <Button label="Use this spot" size="lg" onPress={() => setMapOpen(false)} />
+            <Field
+              label="Landmark or note for the rider"
+              value={landmark}
+              onChangeText={setLandmark}
+              placeholder="Tabi sa bakery, blue gate"
+            />
+            {/*
+              Commits the place and closes the picker. It used to only close
+              the map, which landed the customer back on the search list
+              under the same title and read as the pin having reset.
+            */}
+            <Button label="Use this spot" size="lg" onPress={confirm} disabled={!pin} />
           </Stack>
         ) : (
           <Stack gap={4} style={{ flex: 1 }}>
